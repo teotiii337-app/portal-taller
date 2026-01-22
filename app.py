@@ -233,30 +233,92 @@ def main():
                 else:
                     st.info("No tienes registros de asistencia aún.")
 
-            # --- TABLA DERECHA: TESORERÍA ---
+# --- TABLA DERECHA: TESORERÍA (CON ESTADO DE CUENTA INTELIGENTE) ---
             with col_der:
-                st.subheader("💰 Desglose de Cuentas")
+                st.subheader("💰 Estado de Cuenta Detallado")
+                
                 if not mi_tes.empty:
-                    # Ordenar por fecha (si es posible, si no por orden de inserción invertido)
-                    mi_tes = mi_tes.iloc[::-1] # Invertir orden para ver lo más nuevo arriba
+                    # 1. Separar Cargos y Abonos
+                    # Aseguramos que los montos sean numéricos
+                    mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
                     
-                    # Seleccionar columnas
-                    display_tes = mi_tes[['Fecha', 'Concepto', 'Tipo', 'Monto']]
+                    cargos = mi_tes[mi_tes['Tipo'] == 'Cargo'].copy()
+                    total_pagado = mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
                     
-                    # Formato condicional visual
-                    def color_tipo(val):
-                        color = 'red' if val == 'Cargo' else 'green'
-                        return f'color: {color}; font-weight: bold'
+                    # 2. Lógica FIFO (El dinero paga la deuda más vieja primero)
+                    data_estado_cuenta = []
+                    dinero_disponible = total_pagado
+                    
+                    # Ordenamos cargos del más viejo al más nuevo para irlos pagando en orden
+                    # (Asumiendo que insertas en orden cronológico, si no, habría que ordenar por fecha)
+                    for index, row in cargos.iterrows():
+                        monto_deuda = row['Monto']
+                        estado = ""
+                        pagado_aqui = 0
+                        saldo_pendiente = 0
+                        
+                        if dinero_disponible >= monto_deuda:
+                            # Alcanza para pagar toda esta deuda
+                            estado = "Pagado"
+                            pagado_aqui = monto_deuda
+                            saldo_pendiente = 0
+                            dinero_disponible -= monto_deuda
+                        elif dinero_disponible > 0:
+                            # Alcanza para pagar solo una parte (Abono parcial)
+                            estado = "Parcial"
+                            pagado_aqui = dinero_disponible
+                            saldo_pendiente = monto_deuda - dinero_disponible
+                            dinero_disponible = 0
+                        else:
+                            # Ya no hay dinero para esta deuda
+                            estado = "Adeudo"
+                            pagado_aqui = 0
+                            saldo_pendiente = monto_deuda
+                            
+                        data_estado_cuenta.append({
+                            "Fecha": row['Fecha'],
+                            "Concepto": row['Concepto'],
+                            "Costo": monto_deuda,
+                            "Estatus": estado,
+                            "Falta": saldo_pendiente
+                        })
+                    
+                    # Crear DataFrame para visualizar
+                    df_visual = pd.DataFrame(data_estado_cuenta)
+                    
+                    # Si no hay cargos pero hay saldo a favor (dinero extra)
+                    if df_visual.empty and total_pagado > 0:
+                        st.success(f"No tienes deudas registradas. Tienes un saldo a favor de ${total_pagado:,.2f}")
+                    
+                    elif not df_visual.empty:
+                        # Invertimos el orden para mostrar lo más reciente arriba en la tabla (Enero abajo, Marzo arriba)
+                        df_visual = df_visual.iloc[::-1]
 
-                    st.dataframe(
-                        display_tes.style.map(color_tipo, subset=['Tipo'])
-                                   .format({"Monto": "${:,.2f}"}), # Formato moneda
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                        # 3. Formato Visual con Colores (Pandas Styler)
+                        def estilo_status(val):
+                            color = 'red'
+                            weight = 'normal'
+                            if val == 'Pagado':
+                                color = 'green'
+                            elif val == 'Parcial':
+                                color = 'orange'
+                                weight = 'bold'
+                            return f'color: {color}; font-weight: {weight}'
+
+                        st.dataframe(
+                            df_visual.style.map(estilo_status, subset=['Estatus'])
+                                     .format({"Costo": "${:,.0f}", "Falta": "${:,.0f}"}), # Formato moneda sin centavos para limpieza
+                            column_order=("Fecha", "Concepto", "Estatus", "Falta"), # Ocultamos "Costo" para no saturar, o puedes agregarlo
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Mostrar Saldo a Favor remanente si sobró dinero después de pagar todo
+                        if dinero_disponible > 0:
+                            st.caption(f"✨ Tienes un saldo a favor adicional de: **${dinero_disponible:,.2f}**")
+                            
                 else:
-                    st.info("No hay movimientos registrados.")
-
+                    st.info("Sin movimientos.")
         # ------------------------------------------
         # VISTA: DETALLE ASISTENCIAS
         # ------------------------------------------
@@ -448,3 +510,4 @@ def main():
 if __name__ == '__main__':
 
     main()
+
