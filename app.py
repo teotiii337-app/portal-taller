@@ -132,53 +132,130 @@ def main():
         sh = connect_db()
 
         # ------------------------------------------
-        # VISTA: MI TABLERO (RESUMEN)
+        # VISTA: MI TABLERO (RESUMEN DETALLADO)
         # ------------------------------------------
         if menu == "Mi Tablero (Resumen)":
-            st.header("Mi Estado Actual")
-            
-            # Traer datos Tesorería
+            st.title(f"∴ Tablero del H:. {st.session_state['nombre']}")
+            st.markdown("---")
+
+            # 1. RECUPERAR DATOS (TESORERÍA Y ASISTENCIA)
+            # Tesorería
             ws_tes = sh.worksheet("TESORERIA")
             df_tes = pd.DataFrame(ws_tes.get_all_records())
-            # Convertir ID a string para asegurar coincidencia
             df_tes['ID_H'] = df_tes['ID_H'].astype(str)
             mi_tes = df_tes[df_tes['ID_H'] == st.session_state['id_h']]
-            
-            # Cálculo Saldo
-            # Limpiamos símbolos de moneda si existen y convertimos a float
-            total_cargos = pd.to_numeric(mi_tes[mi_tes['Tipo'] == 'Cargo']['Monto']).sum()
-            total_abonos = pd.to_numeric(mi_tes[mi_tes['Tipo'] == 'Abono']['Monto']).sum()
-            saldo = total_cargos - total_abonos
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("💰 Finanzas")
-                if saldo > 0:
-                    st.error(f"Saldo Pendiente: ${saldo:,.2f}")
-                    st.caption("Favor de ponerse a plomo con el Tes:.")
-                elif saldo == 0:
-                    st.success("Estás a plomo ($0.00)")
-                else:
-                    st.success(f"Saldo a Favor: ${abs(saldo):,.2f}")
-            
-            with col2:
-                st.subheader("attendance Asistencia")
-                # Lógica simplificada de asistencia (La real requiere filtrar por fechas/grados histórico)
-                ws_asis = sh.worksheet("ASISTENCIAS")
-                df_asis = pd.DataFrame(ws_asis.get_all_records())
+
+            # Asistencia
+            ws_asis = sh.worksheet("ASISTENCIAS")
+            df_asis = pd.DataFrame(ws_asis.get_all_records())
+            # Si la hoja está vacía o no tiene datos del H, manejamos el error
+            if not df_asis.empty:
                 df_asis['ID_H'] = df_asis['ID_H'].astype(str)
                 mis_asis = df_asis[df_asis['ID_H'] == st.session_state['id_h']]
-                
-                if not mis_asis.empty:
-                    faltas = len(mis_asis[mis_asis['Estado'] == 'Falta'])
-                    asistencias = len(mis_asis[mis_asis['Estado'].isin(['Presente', 'Retardo'])])
-                    total_reg = faltas + asistencias
-                    if total_reg > 0:
-                        porcentaje = (asistencias / total_reg) * 100
-                        st.metric("Porcentaje Global", f"{porcentaje:.1f}%")
-                        st.progress(porcentaje / 100)
+            else:
+                mis_asis = pd.DataFrame(columns=['Fecha_Tenida', 'Estado', 'Grado_Tenida'])
+
+            # 2. CÁLCULOS DE SALDOS Y ESTADÍSTICAS
+            # Limpieza de datos numéricos (quitamos signos de $ o comas si existen)
+            try:
+                mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'])
+            except:
+                pass # Si falla es porque ya es numérico o está vacío
+
+            total_cargos = mi_tes[mi_tes['Tipo'] == 'Cargo']['Monto'].sum()
+            total_abonos = mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
+            saldo = total_cargos - total_abonos
+            
+            # Cálculo de Cápitas Pendientes (Asumiendo cápita de $450)
+            MONTO_CAPITA = 450
+            num_capitas = 0
+            if saldo > 0:
+                num_capitas = int(saldo / MONTO_CAPITA)
+
+            # Cálculo Asistencia
+            porcentaje = 0.0
+            if not mis_asis.empty:
+                total_reg = len(mis_asis)
+                # Contamos Presente y Retardo como asistencia positiva
+                asistencias = len(mis_asis[mis_asis['Estado'].isin(['Presente', 'Retardo', 'Comisión'])])
+                if total_reg > 0:
+                    porcentaje = (asistencias / total_reg) * 100
+
+            # 3. TARJETAS DE RESUMEN (KPIs)
+            kpi1, kpi2, kpi3 = st.columns(3)
+            
+            with kpi1:
+                st.metric("Asistencia Global", f"{porcentaje:.1f}%", help="Calculado sobre Tenidas convocadas")
+            
+            with kpi2:
+                # Color dinámico: Rojo si debe, Verde si tiene saldo a favor
+                if saldo > 0:
+                    st.metric("Saldo Pendiente", f"${saldo:,.2f}", f"-{num_capitas} Cápitas aprox.", delta_color="inverse")
+                elif saldo == 0:
+                    st.metric("Estatus", "A Plomo ($0.00)", delta_color="normal")
                 else:
-                    st.info("Sin registros suficientes.")
+                    st.metric("Saldo a Favor", f"${abs(saldo):,.2f}", delta_color="normal")
+            
+            with kpi3:
+                st.metric("Total Pagado (Histórico)", f"${total_abonos:,.2f}")
+
+            st.markdown("---")
+
+            # 4. TABLAS DE DETALLE (LADO A LADO)
+            col_izq, col_der = st.columns([1, 1])
+
+            # --- TABLA IZQUIERDA: ASISTENCIAS ---
+            with col_izq:
+                st.subheader("📅 Historial Asistencia")
+                if not mis_asis.empty:
+                    # Ordenar por fecha (asumiendo formato dd/mm/yyyy)
+                    # Convertimos a datetime solo para ordenar, luego mostramos texto
+                    mis_asis['Fecha_DT'] = pd.to_datetime(mis_asis['Fecha_Tenida'], dayfirst=True, errors='coerce')
+                    mis_asis = mis_asis.sort_values(by='Fecha_DT', ascending=False)
+                    
+                    # Seleccionamos columnas para mostrar
+                    display_asis = mis_asis[['Fecha_Tenida', 'Estado', 'Grado_Tenida']]
+                    
+                    # Colorear según estado (Truco visual de Pandas)
+                    def color_estado(val):
+                        color = 'black'
+                        if val == 'Presente': color = 'green'
+                        elif val == 'Falta': color = 'red'
+                        elif val == 'Retardo': color = 'orange'
+                        elif val == 'Justif.': color = 'blue'
+                        return f'color: {color}'
+
+                    st.dataframe(
+                        display_asis.style.map(color_estado, subset=['Estado']),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("No tienes registros de asistencia aún.")
+
+            # --- TABLA DERECHA: TESORERÍA ---
+            with col_der:
+                st.subheader("💰 Desglose de Cuentas")
+                if not mi_tes.empty:
+                    # Ordenar por fecha (si es posible, si no por orden de inserción invertido)
+                    mi_tes = mi_tes.iloc[::-1] # Invertir orden para ver lo más nuevo arriba
+                    
+                    # Seleccionar columnas
+                    display_tes = mi_tes[['Fecha', 'Concepto', 'Tipo', 'Monto']]
+                    
+                    # Formato condicional visual
+                    def color_tipo(val):
+                        color = 'red' if val == 'Cargo' else 'green'
+                        return f'color: {color}; font-weight: bold'
+
+                    st.dataframe(
+                        display_tes.style.map(color_tipo, subset=['Tipo'])
+                                   .format({"Monto": "${:,.2f}"}), # Formato moneda
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("No hay movimientos registrados.")
 
         # ------------------------------------------
         # VISTA: DETALLE ASISTENCIAS
@@ -369,4 +446,5 @@ def main():
                     st.success(f"H:. {nuevo_nombre} registrado. Dile que entre con '{nuevo_pass_temp}' para configurar su clave.")
 
 if __name__ == '__main__':
+
     main()
