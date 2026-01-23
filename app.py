@@ -905,10 +905,10 @@ def main():
                     else:
                         st.warning(f"El H:. {target_h} no tiene movimientos registrados en Tesorería.")
 
+# ---------------------------------------------------------
+        # VISTA ADMIN: GESTIÓN DE EXPEDIENTES (ID AUTOMÁTICO)
         # ---------------------------------------------------------
-        # VISTA ADMIN: GESTIÓN DE EXPEDIENTES (ALTA Y EDICIÓN)
-        # ---------------------------------------------------------
-        elif menu == "ADMIN: Alta HH:.": # Puedes cambiar el nombre del menú arriba si quieres
+        elif menu == "ADMIN: Alta HH:.":
             st.header("🗂️ Gestión de Expedientes")
             
             tab_alta, tab_editar = st.tabs(["➕ Alta de Neófito / Afiliado", "✏️ Actualizar Expediente"])
@@ -916,12 +916,32 @@ def main():
             # --- TAB 1: ALTA NUEVA ---
             with tab_alta:
                 st.subheader("Ficha de Ingreso")
+                
+                # 1. CÁLCULO DEL ID CONSECUTIVO (AUTOMÁTICO)
+                ws_dir = sh.worksheet("DIRECTORIO")
+                df_dir = pd.DataFrame(ws_dir.get_all_records())
+                
+                siguiente_id = 1 # Valor por defecto si la lista está vacía
+                
+                if not df_dir.empty:
+                    # Convertimos la columna ID a números para encontrar el máximo real
+                    # 'coerce' transforma textos raros a NaN para que no rompan el código
+                    ids_existentes = pd.to_numeric(df_dir['ID_H'], errors='coerce')
+                    if not ids_existentes.empty:
+                        max_id = ids_existentes.max()
+                        if pd.notna(max_id):
+                            siguiente_id = int(max_id) + 1
+                
+                # FORMULARIO
                 with st.form("form_alta_completa"):
                     
                     # SECCIÓN 1: IDENTIDAD Y ACCESO
                     st.markdown("### 1. Identidad y Acceso")
-                    c1, c2, c3 = st.columns(3)
-                    nuevo_id = c1.text_input("ID (Ej: 035)")
+                    c1, c2, c3 = st.columns([1, 2, 1])
+                    
+                    # AQUÍ ESTÁ EL CAMBIO: Muestra el ID calculado y lo deshabilita
+                    c1.text_input("ID (Automático)", value=str(siguiente_id), disabled=True)
+                    
                     nuevo_nombre = c2.text_input("Nombre Completo")
                     rol = c3.selectbox("Rol en Sistema", ["Miembro", "Admin"])
                     
@@ -981,7 +1001,6 @@ def main():
                     col_h1, col_h2, col_h3 = st.columns(3)
                     f_inic = col_h1.date_input("Fecha Iniciación", datetime.today())
                     
-                    # Lógica visual: Si es Ap:. no preguntamos Aumento/Exaltación
                     f_aum = ""
                     f_exal = ""
                     
@@ -992,7 +1011,7 @@ def main():
                     
                     historial_cargos = st.text_area(
                         "Curriculum Masónico (Cargos Anteriores)",
-                        placeholder="Ejemplo:\n2022 - Guarda Templo - Logia Sol #1\n2024 - 2o Diácono - Logia Luna #2",
+                        placeholder="Ejemplo:\n2022 - Guarda Templo - Logia Sol #1",
                         help="Escribe lista de cargos, periodos y talleres."
                     )
 
@@ -1000,15 +1019,23 @@ def main():
                     submitted = st.form_submit_button("💾 Crear Expediente")
                     
                     if submitted:
-                        if nuevo_id and nuevo_nombre and usuario:
+                        if nuevo_nombre and usuario:
                             try:
-                                ws_dir = sh.worksheet("DIRECTORIO")
+                                # Volvemos a leer para asegurar que nadie ganó el ID mientras llenábamos el form
+                                # (Doble verificación de seguridad)
+                                ws_dir_check = sh.worksheet("DIRECTORIO") # Recargar hoja
+                                df_check = pd.DataFrame(ws_dir_check.get_all_records())
+                                id_final = 1
+                                if not df_check.empty:
+                                    ids_check = pd.to_numeric(df_check['ID_H'], errors='coerce')
+                                    if not ids_check.empty:
+                                        id_final = int(ids_check.max()) + 1
+                                
                                 pass_hash = make_hash(password_temp)
                                 
-                                # Preparar la fila GIGANTE
-                                # Orden: ID, Nombre, User, Pass, Reset, Rol, Grado, Estatus... (Sigue el orden de tus columnas)
+                                # Usamos 'id_final' calculado al momento exacto de guardar
                                 nueva_fila = [
-                                    nuevo_id, nuevo_nombre, usuario, pass_hash, "TRUE", rol, grado_inicial, "Activo",
+                                    id_final, nuevo_nombre, usuario, pass_hash, "TRUE", rol, grado_inicial, "Activo",
                                     f_nac.strftime("%d/%m/%Y"), tel_fijo, tel_cel, email, direccion,
                                     f_inic.strftime("%d/%m/%Y"), f_aum, f_exal,
                                     profesion, lugar_trabajo, puesto, horario, tel_trabajo,
@@ -1018,12 +1045,13 @@ def main():
                                     historial_cargos
                                 ]
                                 
-                                ws_dir.append_row(nueva_fila)
-                                st.success(f"✅ Expediente de {nuevo_nombre} creado exitosamente.")
+                                ws_dir_check.append_row(nueva_fila)
+                                st.balloons()
+                                st.success(f"✅ Expediente creado para {nuevo_nombre} con el ID #{id_final}")
                             except Exception as e:
                                 st.error(f"Error al guardar: {e}")
                         else:
-                            st.warning("Faltan datos obligatorios (ID, Nombre, Usuario).")
+                            st.warning("Faltan datos obligatorios (Nombre, Usuario).")
 
             # --- TAB 2: EDITAR / ACTUALIZAR ---
             with tab_editar:
@@ -1032,52 +1060,54 @@ def main():
                 ws_dir = sh.worksheet("DIRECTORIO")
                 df = pd.DataFrame(ws_dir.get_all_records())
                 
-                # Selector de Hermano
-                opciones = df['Nombre_Completo'].tolist()
-                seleccion = st.selectbox("Seleccionar Hermano a Editar:", opciones)
-                
-                if seleccion:
-                    # Encontrar datos actuales
-                    datos_h = df[df['Nombre_Completo'] == seleccion].iloc[0]
-                    # Indice + 2 (1 por 0-index, 1 por header)
-                    row_index = df[df['Nombre_Completo'] == seleccion].index[0] + 2
+                if not df.empty:
+                    opciones = df['Nombre_Completo'].tolist()
+                    seleccion = st.selectbox("Seleccionar Hermano a Editar:", opciones)
                     
-                    with st.form("form_edicion"):
-                        st.info(f"Editando a: {seleccion} (ID: {datos_h['ID_H']})")
+                    if seleccion:
+                        datos_h = df[df['Nombre_Completo'] == seleccion].iloc[0]
+                        row_index = df[df['Nombre_Completo'] == seleccion].index[0] + 2
                         
-                        # Aquí ponemos solo los campos más comunes de editar
-                        # (Puedes agregar todos si quieres, pero por espacio pongo los clave)
-                        
-                        c_e1, c_e2 = st.columns(2)
-                        n_cel = c_e1.text_input("Celular", datos_h['Tel_Celular'])
-                        n_mail = c_e2.text_input("Email", datos_h['Email'])
-                        
-                        st.markdown("#### Progreso Masónico")
-                        c_g1, c_g2, c_g3 = st.columns(3)
-                        n_grado = c_g1.selectbox("Grado Actual", [1, 2, 3], index=(int(datos_h['Grado_Actual'])-1))
-                        n_faum = c_g2.text_input("Fecha Aumento", datos_h['Fecha_Aum'])
-                        n_fexal = c_g3.text_input("Fecha Exaltación", datos_h['Fecha_Exal'])
-                        
-                        st.markdown("#### Curriculum Masónico")
-                        n_cargos = st.text_area("Historial de Cargos", datos_h['Historial_Cargos'], height=150)
-                        
-                        if st.form_submit_button("💾 Guardar Cambios"):
-                            # Actualizar celdas específicas
-                            # OJO: Los números de columna dependen de tu Excel.
-                            # K=11(Cel), L=12(Email), G=7(Grado), O=15(Aum), P=16(Exal), AG=33(Cargos)
+                        with st.form("form_edicion"):
+                            st.info(f"Editando a: {seleccion} (ID: {datos_h['ID_H']})")
                             
-                            ws_dir.update_cell(row_index, 11, n_cel)
-                            ws_dir.update_cell(row_index, 12, n_mail)
-                            ws_dir.update_cell(row_index, 7, n_grado)
-                            ws_dir.update_cell(row_index, 15, n_faum)
-                            ws_dir.update_cell(row_index, 16, n_fexal)
-                            ws_dir.update_cell(row_index, 33, n_cargos)
+                            c_e1, c_e2 = st.columns(2)
+                            n_cel = c_e1.text_input("Celular", datos_h['Tel_Celular'])
+                            n_mail = c_e2.text_input("Email", datos_h['Email'])
                             
-                            st.success("✅ Datos actualizados.")
+                            st.markdown("#### Progreso Masónico")
+                            c_g1, c_g2, c_g3 = st.columns(3)
+                            # Control de error por si el grado en Excel está vacío o raro
+                            g_actual_idx = 0
+                            try:
+                                g_val = int(datos_h['Grado_Actual'])
+                                if 1 <= g_val <= 3: g_actual_idx = g_val - 1
+                            except:
+                                pass
+
+                            n_grado = c_g1.selectbox("Grado Actual", [1, 2, 3], index=g_actual_idx)
+                            n_faum = c_g2.text_input("Fecha Aumento", datos_h['Fecha_Aum'])
+                            n_fexal = c_g3.text_input("Fecha Exaltación", datos_h['Fecha_Exal'])
+                            
+                            st.markdown("#### Curriculum Masónico")
+                            n_cargos = st.text_area("Historial de Cargos", datos_h['Historial_Cargos'], height=150)
+                            
+                            if st.form_submit_button("💾 Guardar Cambios"):
+                                # Actualizar celdas (Col K=11, L=12, G=7, O=15, P=16, AG=33)
+                                ws_dir.update_cell(row_index, 11, n_cel)
+                                ws_dir.update_cell(row_index, 12, n_mail)
+                                ws_dir.update_cell(row_index, 7, n_grado)
+                                ws_dir.update_cell(row_index, 15, n_faum)
+                                ws_dir.update_cell(row_index, 16, n_fexal)
+                                ws_dir.update_cell(row_index, 33, n_cargos)
+                                st.success("✅ Datos actualizados.")
+                else:
+                    st.warning("El directorio está vacío.")
 
 if __name__ == '__main__':
 
     main()
+
 
 
 
