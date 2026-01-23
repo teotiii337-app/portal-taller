@@ -330,101 +330,138 @@ def main():
             mis_asis = df_asis[df_asis['ID_H'] == st.session_state['id_h']]
             st.dataframe(mis_asis[['Fecha_Tenida', 'Grado_Tenida', 'Estado', 'Observaciones']], use_container_width=True)
 
-        # ------------------------------------------
-        # VISTA: DETALLE TESORERÍA (CON FORMATO INTELIGENTE)
+# ------------------------------------------
+        # VISTA: DETALLE TESORERÍA (CON CRUCE DE FECHAS)
         # ------------------------------------------
         elif menu == "Detalle Tesorería":
             st.title("💰 Historial y Estado de Cuenta")
             st.markdown("---")
             
-            # 1. Cargar datos
+            # 1. Cargar datos y asegurar formato correcto
             ws_tes = sh.worksheet("TESORERIA")
             df_tes = pd.DataFrame(ws_tes.get_all_records())
+            
+            # Forzar que ID sea string para comparar bien
             df_tes['ID_H'] = df_tes['ID_H'].astype(str)
             mi_tes = df_tes[df_tes['ID_H'] == st.session_state['id_h']]
 
             if not mi_tes.empty:
-                # 2. Pestañas para organizar la información
-                tab_edo, tab_recibos = st.tabs(["📊 Estado de Adeudos", "🧾 Comprobantes de Pago"])
+                # Asegurar numéricos
+                mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
                 
-                # --- PESTAÑA 1: LO QUE DEBO VS LO QUE YA PAGUÉ (Lógica FIFO) ---
+                # Pestañas
+                tab_edo, tab_recibos = st.tabs(["📊 Estado de Adeudos", "🧾 Historial de Pagos"])
+                
+                # --- PESTAÑA 1: ESTADO DE CUENTA INTELIGENTE ---
                 with tab_edo:
-                    st.caption("Desglose de cómo se han aplicado tus pagos a tus deudas (Cápitas, etc.)")
+                    st.info("Aquí ves cómo tus pagos han ido cubriendo tus deudas mes a mes.")
                     
-                    # Convertir a números
-                    mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
-                    
-                    # Separar deuda y dinero
+                    # Separamos Cargos y Abonos
                     cargos = mi_tes[mi_tes['Tipo'] == 'Cargo'].copy()
-                    total_pagado = mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
+                    abonos = mi_tes[mi_tes['Tipo'] == 'Abono'].copy()
                     
-                    data_estado_cuenta = []
-                    dinero_disponible = total_pagado
-                    
-                    # Recorremos deudas (Cargos)
-                    for index, row in cargos.iterrows():
-                        monto_deuda = row['Monto']
-                        estado = ""
-                        saldo_pendiente = 0
-                        
-                        if dinero_disponible >= monto_deuda:
-                            estado = "Pagado"
-                            dinero_disponible -= monto_deuda
-                        elif dinero_disponible > 0:
-                            estado = "Parcial"
-                            saldo_pendiente = monto_deuda - dinero_disponible
-                            dinero_disponible = 0
-                        else:
-                            estado = "Adeudo"
-                            saldo_pendiente = monto_deuda
-                            
-                        data_estado_cuenta.append({
-                            "Fecha": row['Fecha'],
-                            "Concepto": row['Concepto'],
-                            "Monto Original": monto_deuda,
-                            "Estatus": estado,
-                            "Saldo Pendiente": saldo_pendiente
+                    # Convertimos a listas de diccionarios para procesar fácil
+                    # Es vital que los abonos estén ordenados por fecha para aplicar FIFO (Primero entra, primero paga)
+                    # Aquí asumimos orden de inserción (Excel), si quisieras por fecha estricta habría que ordenar.
+                    cola_abonos = []
+                    for _, row in abonos.iterrows():
+                        cola_abonos.append({
+                            'fecha': row['Fecha'], 
+                            'monto_disponible': row['Monto']
                         })
                     
-                    # Visualización
+                    data_estado_cuenta = []
+                    
+                    # Recorremos cada deuda para ver con qué se paga
+                    for _, row_cargo in cargos.iterrows():
+                        monto_deuda = row_cargo['Monto']
+                        saldo_deuda = monto_deuda
+                        
+                        detalles_pago = [] # Aquí guardaremos "Pagado $X el [Fecha]"
+                        
+                        # Mientras la deuda siga viva y tenga dinero en los abonos...
+                        while saldo_deuda > 0 and cola_abonos:
+                            abono_actual = cola_abonos[0] # Tomamos el abono más viejo disponible
+                            
+                            if abono_actual['monto_disponible'] > saldo_deuda:
+                                # El abono cubre toda la deuda y sobra
+                                detalles_pago.append(f"${saldo_deuda:,.0f} ({abono_actual['fecha']})")
+                                abono_actual['monto_disponible'] -= saldo_deuda
+                                saldo_deuda = 0
+                            elif abono_actual['monto_disponible'] == saldo_deuda:
+                                # El abono cubre exacto
+                                detalles_pago.append(f"${saldo_deuda:,.0f} ({abono_actual['fecha']})")
+                                saldo_deuda = 0
+                                cola_abonos.pop(0) # Ese abono se acabó
+                            else:
+                                # El abono no alcanza, paga lo que tiene y se acaba
+                                pagado = abono_actual['monto_disponible']
+                                detalles_pago.append(f"${pagado:,.0f} ({abono_actual['fecha']})")
+                                saldo_deuda -= pagado
+                                cola_abonos.pop(0) # Pasamos al siguiente abono
+                        
+                        # Determinar estado final de esa fila
+                        if saldo_deuda == 0:
+                            estatus = "Pagado"
+                        elif saldo_deuda < monto_deuda:
+                            estatus = "Parcial"
+                        else:
+                            estatus = "Adeudo"
+                            
+                        # Formatear el texto de detalle
+                        if detalles_pago:
+                            texto_pagos = ", ".join(detalles_pago)
+                        else:
+                            texto_pagos = "-"
+
+                        data_estado_cuenta.append({
+                            "Fecha Cargo": row_cargo['Fecha'],
+                            "Concepto": row_cargo['Concepto'],
+                            "Monto": monto_deuda,
+                            "Abonado": (monto_deuda - saldo_deuda),
+                            "Saldo Pendiente": saldo_deuda,
+                            "Estatus": estatus,
+                            "Detalle Pagos": texto_pagos
+                        })
+                    
+                    # VISUALIZACIÓN
                     df_visual = pd.DataFrame(data_estado_cuenta)
                     
                     if not df_visual.empty:
-                        # Invertir orden (lo más nuevo arriba)
+                        # Invertimos para ver lo más reciente arriba
                         df_visual = df_visual.iloc[::-1]
                         
-                        def estilo_status(val):
+                        def estilo_completo(val):
                             if val == 'Pagado': return 'color: green'
                             if val == 'Parcial': return 'color: orange; font-weight: bold'
                             return 'color: red'
 
                         st.dataframe(
-                            df_visual.style.map(estilo_status, subset=['Estatus'])
-                                     .format({"Monto Original": "${:,.2f}", "Saldo Pendiente": "${:,.2f}"}),
+                            df_visual.style.map(estilo_completo, subset=['Estatus'])
+                                     .format({
+                                         "Monto": "${:,.2f}", 
+                                         "Abonado": "${:,.2f}", 
+                                         "Saldo Pendiente": "${:,.2f}"
+                                     }),
+                            column_order=("Fecha Cargo", "Concepto", "Estatus", "Saldo Pendiente", "Detalle Pagos"),
                             use_container_width=True,
                             hide_index=True
                         )
                     else:
-                        st.info("No tienes cargos registrados.")
+                        st.info("No tienes deudas registradas.")
                         
-                    if dinero_disponible > 0:
-                        st.success(f"Tienes un saldo a favor acumulado de: ${dinero_disponible:,.2f}")
+                    # Checar si sobró dinero en el último abono
+                    remanente = sum(a['monto_disponible'] for a in cola_abonos)
+                    if remanente > 0:
+                        st.success(f"✨ Tienes un saldo a favor disponible de: **${remanente:,.2f}**")
 
-                # --- PESTAÑA 2: HISTORIAL DE RECIBOS (Solo Abonos) ---
+                # --- PESTAÑA 2: TABLA SIMPLE DE ABONOS ---
                 with tab_recibos:
-                    st.caption("Lista de todos los pagos que has hecho al Taller.")
-                    mis_abonos = mi_tes[mi_tes['Tipo'] == 'Abono'][['Fecha', 'Concepto', 'Monto']]
-                    if not mis_abonos.empty:
-                        st.dataframe(
-                            mis_abonos.style.format({"Monto": "${:,.2f}"}), 
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                    else:
-                        st.info("No has realizado pagos aún.")
+                    st.caption("Lista simple de tus abonos registrados")
+                    st.dataframe(abonos[['Fecha', 'Concepto', 'Monto']], use_container_width=True, hide_index=True)
 
             else:
-                st.info("No hay movimientos en tu cuenta.")
+                st.info("Sin movimientos en Tesorería.")
         # ------------------------------------------
         # SECCIÓN ADMIN: PASE DE LISTA
         # ------------------------------------------
@@ -594,5 +631,6 @@ def main():
 if __name__ == '__main__':
 
     main()
+
 
 
