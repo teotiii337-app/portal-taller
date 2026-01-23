@@ -905,33 +905,180 @@ def main():
                     else:
                         st.warning(f"El H:. {target_h} no tiene movimientos registrados en Tesorería.")
 
-        # ------------------------------------------
-        # SECCIÓN ADMIN: ALTA DE HH (INICIACIÓN)
-        # ------------------------------------------
-        elif menu == "ADMIN: Alta HH:.":
-            st.header("Alta de Neófito / Afiliado")
-            with st.form("alta_user"):
-                c1, c2 = st.columns(2)
-                nuevo_id = c1.text_input("ID Nuevo (Ej: 035)")
-                nuevo_nombre = c2.text_input("Nombre Completo")
-                nuevo_user = c1.text_input("Usuario (Ej: jlopez)")
-                nuevo_pass_temp = c2.text_input("Contraseña Temporal")
-                fecha_ini = st.date_input("Fecha Iniciación", datetime.today())
+        # ---------------------------------------------------------
+        # VISTA ADMIN: GESTIÓN DE EXPEDIENTES (ALTA Y EDICIÓN)
+        # ---------------------------------------------------------
+        elif menu == "ADMIN: Alta HH:.": # Puedes cambiar el nombre del menú arriba si quieres
+            st.header("🗂️ Gestión de Expedientes")
+            
+            tab_alta, tab_editar = st.tabs(["➕ Alta de Neófito / Afiliado", "✏️ Actualizar Expediente"])
+
+            # --- TAB 1: ALTA NUEVA ---
+            with tab_alta:
+                st.subheader("Ficha de Ingreso")
+                with st.form("form_alta_completa"):
+                    
+                    # SECCIÓN 1: IDENTIDAD Y ACCESO
+                    st.markdown("### 1. Identidad y Acceso")
+                    c1, c2, c3 = st.columns(3)
+                    nuevo_id = c1.text_input("ID (Ej: 035)")
+                    nuevo_nombre = c2.text_input("Nombre Completo")
+                    rol = c3.selectbox("Rol en Sistema", ["Miembro", "Admin"])
+                    
+                    c4, c5, c6 = st.columns(3)
+                    usuario = c4.text_input("Usuario (Login)")
+                    password_temp = c5.text_input("Contraseña Temporal")
+                    grado_inicial = c6.selectbox("Grado al Ingresar", [1, 2, 3], format_func=lambda x: f"{x}º")
+                    
+                    # SECCIÓN 2: DATOS PERSONALES
+                    st.markdown("### 2. Datos Personales")
+                    col_p1, col_p2, col_p3 = st.columns(3)
+                    f_nac = col_p1.date_input("Fecha Nacimiento", datetime(1980, 1, 1))
+                    tel_fijo = col_p2.text_input("Tel. Fijo")
+                    tel_cel = col_p3.text_input("Tel. Celular")
+                    
+                    col_p4, col_p5 = st.columns([1, 2])
+                    email = col_p4.text_input("Correo Electrónico")
+                    direccion = col_p5.text_input("Dirección Completa")
+
+                    # SECCIÓN 3: PERFIL PROFESIONAL
+                    st.markdown("### 3. Perfil Profesional")
+                    col_pr1, col_pr2, col_pr3 = st.columns(3)
+                    profesion = col_pr1.text_input("Profesión")
+                    lugar_trabajo = col_pr2.text_input("Lugar de Trabajo")
+                    puesto = col_pr3.text_input("Puesto")
+                    
+                    col_pr4, col_pr5 = st.columns(2)
+                    horario = col_pr4.text_input("Horario Laboral")
+                    tel_trabajo = col_pr5.text_input("Tel. Trabajo y Ext.")
+
+                    # SECCIÓN 4: DATOS MÉDICOS
+                    st.markdown("### 4. Ficha Médica")
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    sangre = col_m1.text_input("Tipo de Sangre")
+                    seguro = col_m2.text_input("Seguro Médico (Institución)")
+                    covid = col_m3.selectbox("¿Vulnerable COVID?", ["No", "Sí"])
+                    
+                    enfermedades = st.text_area("Enfermedades Crónicas (Si no, dejar vacío)")
+                    alergias = st.text_area("Alergias (Si no, dejar vacío)")
+
+                    # SECCIÓN 5: CONTACTOS DE EMERGENCIA Y BENEFICIARIOS
+                    st.markdown("### 5. Emergencia y Beneficiarios")
+                    st.caption("Contacto de Emergencia")
+                    ce1, ce2, ce3 = st.columns(3)
+                    nom_emerg = ce1.text_input("Nombre Contacto Emergencia")
+                    tel_emerg = ce2.text_input("Tel. Emergencia")
+                    par_emerg = ce3.text_input("Parentesco Emergencia")
+                    
+                    st.caption("Beneficiario")
+                    cb1, cb2, cb3 = st.columns(3)
+                    nom_ben = cb1.text_input("Nombre Beneficiario")
+                    tel_ben = cb2.text_input("Tel. Beneficiario")
+                    par_ben = cb3.text_input("Parentesco Beneficiario")
+
+                    # SECCIÓN 6: HISTORIAL MASÓNICO
+                    st.markdown("### 6. Historial Masónico")
+                    col_h1, col_h2, col_h3 = st.columns(3)
+                    f_inic = col_h1.date_input("Fecha Iniciación", datetime.today())
+                    
+                    # Lógica visual: Si es Ap:. no preguntamos Aumento/Exaltación
+                    f_aum = ""
+                    f_exal = ""
+                    
+                    if grado_inicial > 1:
+                        f_aum = col_h2.date_input("Fecha Aumento", datetime.today()).strftime("%d/%m/%Y")
+                    if grado_inicial > 2:
+                        f_exal = col_h3.date_input("Fecha Exaltación", datetime.today()).strftime("%d/%m/%Y")
+                    
+                    historial_cargos = st.text_area(
+                        "Curriculum Masónico (Cargos Anteriores)",
+                        placeholder="Ejemplo:\n2022 - Guarda Templo - Logia Sol #1\n2024 - 2o Diácono - Logia Luna #2",
+                        help="Escribe lista de cargos, periodos y talleres."
+                    )
+
+                    st.markdown("---")
+                    submitted = st.form_submit_button("💾 Crear Expediente")
+                    
+                    if submitted:
+                        if nuevo_id and nuevo_nombre and usuario:
+                            try:
+                                ws_dir = sh.worksheet("DIRECTORIO")
+                                pass_hash = make_hash(password_temp)
+                                
+                                # Preparar la fila GIGANTE
+                                # Orden: ID, Nombre, User, Pass, Reset, Rol, Grado, Estatus... (Sigue el orden de tus columnas)
+                                nueva_fila = [
+                                    nuevo_id, nuevo_nombre, usuario, pass_hash, "TRUE", rol, grado_inicial, "Activo",
+                                    f_nac.strftime("%d/%m/%Y"), tel_fijo, tel_cel, email, direccion,
+                                    f_inic.strftime("%d/%m/%Y"), f_aum, f_exal,
+                                    profesion, lugar_trabajo, puesto, horario, tel_trabajo,
+                                    sangre, enfermedades, alergias, seguro, covid,
+                                    nom_emerg, tel_emerg, par_emerg,
+                                    nom_ben, tel_ben, par_ben,
+                                    historial_cargos
+                                ]
+                                
+                                ws_dir.append_row(nueva_fila)
+                                st.success(f"✅ Expediente de {nuevo_nombre} creado exitosamente.")
+                            except Exception as e:
+                                st.error(f"Error al guardar: {e}")
+                        else:
+                            st.warning("Faltan datos obligatorios (ID, Nombre, Usuario).")
+
+            # --- TAB 2: EDITAR / ACTUALIZAR ---
+            with tab_editar:
+                st.subheader("Actualización de Datos")
                 
-                if st.form_submit_button("Crear Usuario"):
-                    ws_dir = sh.worksheet("DIRECTORIO")
-                    # Encriptar pass temporal
-                    pass_hash = make_hash(nuevo_pass_temp)
-                    # Agregar fila: ID, Nombre, User, Pass, Reset=TRUE, Rol=Miembro, Grado=1, Fecha...
-                    ws_dir.append_row([
-                        nuevo_id, nuevo_nombre, nuevo_user, pass_hash, "TRUE", "Miembro", 1, 
-                        fecha_ini.strftime("%d/%m/%Y"), "", "", "Activo"
-                    ])
-                    st.success(f"H:. {nuevo_nombre} registrado. Dile que entre con '{nuevo_pass_temp}' para configurar su clave.")
+                ws_dir = sh.worksheet("DIRECTORIO")
+                df = pd.DataFrame(ws_dir.get_all_records())
+                
+                # Selector de Hermano
+                opciones = df['Nombre_Completo'].tolist()
+                seleccion = st.selectbox("Seleccionar Hermano a Editar:", opciones)
+                
+                if seleccion:
+                    # Encontrar datos actuales
+                    datos_h = df[df['Nombre_Completo'] == seleccion].iloc[0]
+                    # Indice + 2 (1 por 0-index, 1 por header)
+                    row_index = df[df['Nombre_Completo'] == seleccion].index[0] + 2
+                    
+                    with st.form("form_edicion"):
+                        st.info(f"Editando a: {seleccion} (ID: {datos_h['ID_H']})")
+                        
+                        # Aquí ponemos solo los campos más comunes de editar
+                        # (Puedes agregar todos si quieres, pero por espacio pongo los clave)
+                        
+                        c_e1, c_e2 = st.columns(2)
+                        n_cel = c_e1.text_input("Celular", datos_h['Tel_Celular'])
+                        n_mail = c_e2.text_input("Email", datos_h['Email'])
+                        
+                        st.markdown("#### Progreso Masónico")
+                        c_g1, c_g2, c_g3 = st.columns(3)
+                        n_grado = c_g1.selectbox("Grado Actual", [1, 2, 3], index=(int(datos_h['Grado_Actual'])-1))
+                        n_faum = c_g2.text_input("Fecha Aumento", datos_h['Fecha_Aum'])
+                        n_fexal = c_g3.text_input("Fecha Exaltación", datos_h['Fecha_Exal'])
+                        
+                        st.markdown("#### Curriculum Masónico")
+                        n_cargos = st.text_area("Historial de Cargos", datos_h['Historial_Cargos'], height=150)
+                        
+                        if st.form_submit_button("💾 Guardar Cambios"):
+                            # Actualizar celdas específicas
+                            # OJO: Los números de columna dependen de tu Excel.
+                            # K=11(Cel), L=12(Email), G=7(Grado), O=15(Aum), P=16(Exal), AG=33(Cargos)
+                            
+                            ws_dir.update_cell(row_index, 11, n_cel)
+                            ws_dir.update_cell(row_index, 12, n_mail)
+                            ws_dir.update_cell(row_index, 7, n_grado)
+                            ws_dir.update_cell(row_index, 15, n_faum)
+                            ws_dir.update_cell(row_index, 16, n_fexal)
+                            ws_dir.update_cell(row_index, 33, n_cargos)
+                            
+                            st.success("✅ Datos actualizados.")
 
 if __name__ == '__main__':
 
     main()
+
 
 
 
