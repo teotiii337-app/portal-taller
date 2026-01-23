@@ -22,7 +22,7 @@ def connect_db():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
     # ⚠️ ASEGÚRATE DE QUE ESTE NOMBRE SEA EL CORRECTO
-    return client.open("NOMBRE_DE_TU_ARCHIVO_GOOGLE_SHEET")
+    return client.open("Sec y Tes")
 
 # ==========================================
 # 2. LÓGICA DE ROLES (PERMISOS)
@@ -437,3 +437,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
