@@ -649,81 +649,215 @@ def main():
                             else:
                                 st.caption("¡Sin faltas registradas!")
 
-        # ------------------------------------------
-        # SECCIÓN ADMIN: TESORERÍA GENERAL (V.M. y TES.)
-        # ------------------------------------------
+# ---------------------------------------------------------
+        # VISTA ADMIN: TESORERÍA GENERAL (CON AUDITORÍA INDIVIDUAL)
+        # ---------------------------------------------------------
         elif menu == "ADMIN: Tesorería General":
-            st.header("⚖️ Balance del Taller")
+            st.header("⚖️ Tesorería y Finanzas")
+            MONTO_CAPITA = 450.0
             
-            # Pestañas internas
-            tab1, tab2, tab3 = st.tabs(["Balance General", "Registrar Pago H:.", "Registrar Gasto/Salida"])
+            # AHORA SON 5 PESTAÑAS (Se agregó la última de Auditoría)
+            tabs = st.tabs(["⚡ Cápitas Masivas", "Balance General", "Pago Individual", "Registrar Gastos", "🔍 Auditoría por H:."])
             
-            # --- TAB 1: BALANCE ---
-            with tab1:
+            # --- TAB 1: CÁPITAS MASIVAS ---
+            with tabs[0]:
+                st.subheader(f"Gestión Mensual (${MONTO_CAPITA})")
+                col_m, col_b = st.columns([1,2])
+                mes = col_m.selectbox("Mes de Cobro", ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"])
+                anio = datetime.now().year
+                
+                with st.expander(f"1️⃣ Generar deuda de {mes} a todos"):
+                    st.warning(f"⚠️ Se cargará ${MONTO_CAPITA} a todos los HH:. Activos.")
+                    if st.button(f"Ejecutar Cargos {mes}"):
+                        ws_dir = sh.worksheet("DIRECTORIO")
+                        ws_tes = sh.worksheet("TESORERIA")
+                        df_hh = pd.DataFrame(ws_dir.get_all_records())
+                        activos = df_hh[df_hh['Estatus'] == 'Activo']
+                        
+                        filas = []
+                        hoy = datetime.today().strftime("%d/%m/%Y")
+                        for _, r in activos.iterrows():
+                            filas.append([hoy, str(r['ID_H']), f"Cápita {mes} {anio}", "Cargo", MONTO_CAPITA])
+                        
+                        ws_tes.append_rows(filas)
+                        st.success(f"✅ Se generaron {len(filas)} cargos.")
+
+                st.markdown("---")
+                st.write(f"### 2️⃣ Registrar Pagos de {mes}")
+                ws_dir = sh.worksheet("DIRECTORIO")
+                df_hh = pd.DataFrame(ws_dir.get_all_records())
+                # Prevenir error si no hay datos
+                if not df_hh.empty:
+                    activos = df_hh[df_hh['Estatus'] == 'Activo'][['ID_H', 'Nombre_Completo']]
+                    activos['PAGÓ'] = False
+                    
+                    edited = st.data_editor(
+                        activos, 
+                        column_config={
+                            "PAGÓ": st.column_config.CheckboxColumn(default=False),
+                            "ID_H": st.column_config.TextColumn(disabled=True)
+                        }, 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
+                    
+                    if st.button("💾 Registrar Pagos Marcados"):
+                        pagadores = edited[edited['PAGÓ'] == True]
+                        if not pagadores.empty:
+                            ws_tes = sh.worksheet("TESORERIA")
+                            ws_caja = sh.worksheet("LIBRO_CAJA")
+                            hoy = datetime.today().strftime("%d/%m/%Y")
+                            f_tes, f_caja = [], []
+                            
+                            for _, r in pagadores.iterrows():
+                                f_tes.append([hoy, str(r['ID_H']), f"Pago Cápita {mes}", "Abono", MONTO_CAPITA])
+                                f_caja.append([hoy, f"Cápita {mes} ({r['Nombre_Completo']})", "Ingreso Interno", MONTO_CAPITA, 0, ""])
+                            
+                            ws_tes.append_rows(f_tes)
+                            ws_caja.append_rows(f_caja)
+                            st.balloons()
+                            st.success(f"✅ {len(pagadores)} pagos registrados correctamente.")
+                else:
+                    st.error("No hay HH:. en el Directorio.")
+
+            # --- TAB 2: BALANCE GENERAL (CORREGIDO) ---
+            with tabs[1]:
                 ws_caja = sh.worksheet("LIBRO_CAJA")
                 df_caja = pd.DataFrame(ws_caja.get_all_records())
                 
-                total_entradas = pd.to_numeric(df_caja['Entrada']).sum()
-                total_salidas = pd.to_numeric(df_caja['Salida']).sum()
-                saldo_real = total_entradas - total_salidas
+                # Validación de Seguridad para evitar el KeyError
+                columnas_esperadas = ['Entrada', 'Salida']
+                if df_caja.empty:
+                    st.warning("El Libro de Caja está vacío o no tiene datos.")
+                    ent, sal = 0, 0
+                elif not all(col in df_caja.columns for col in columnas_esperadas):
+                    st.error(f"🚨 ERROR CRÍTICO: Las columnas en Excel no se llaman 'Entrada' y 'Salida'. Revisa los encabezados.")
+                    ent, sal = 0, 0
+                else:
+                    # Si todo está bien, calculamos
+                    ent = pd.to_numeric(df_caja['Entrada'], errors='coerce').fillna(0).sum()
+                    sal = pd.to_numeric(df_caja['Salida'], errors='coerce').fillna(0).sum()
                 
-                # Cuentas por Cobrar (Deuda de HH)
-                ws_tes_global = sh.worksheet("TESORERIA")
-                df_tg = pd.DataFrame(ws_tes_global.get_all_records())
-                total_deuda_hh = pd.to_numeric(df_tg[df_tg['Tipo'] == 'Cargo']['Monto']).sum() - pd.to_numeric(df_tg[df_tg['Tipo'] == 'Abono']['Monto']).sum()
-
+                # Cálculo de Deuda de HH
+                ws_tg = sh.worksheet("TESORERIA")
+                df_tg = pd.DataFrame(ws_tg.get_all_records())
+                deuda = 0
+                if not df_tg.empty:
+                    df_tg['Monto'] = pd.to_numeric(df_tg['Monto'], errors='coerce').fillna(0)
+                    deuda = df_tg[df_tg['Tipo'] == 'Cargo']['Monto'].sum() - df_tg[df_tg['Tipo'] == 'Abono']['Monto'].sum()
+                
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Dinero en Caja (Real)", f"${saldo_real:,.2f}")
-                m2.metric("Cuentas por Cobrar (Deuda)", f"${total_deuda_hh:,.2f}")
-                m3.metric("Gastos Totales Históricos", f"${total_salidas:,.2f}")
+                m1.metric("Dinero en Caja (Real)", f"${(ent-sal):,.2f}", help="Entradas - Salidas")
+                m2.metric("Cuentas por Cobrar", f"${deuda:,.2f}", delta_color="inverse", help="Dinero que deben los HH:.")
+                m3.metric("Gastos Totales", f"${sal:,.2f}")
                 
-                st.subheader("Movimientos Recientes de Caja")
-                st.dataframe(df_caja.tail(10), use_container_width=True)
+                if not df_caja.empty:
+                    st.subheader("Últimos Movimientos")
+                    st.dataframe(df_caja.tail(10).iloc[::-1], use_container_width=True, hide_index=True)
 
-            # --- TAB 2: REGISTRAR PAGO DE UN HERMANO ---
-            with tab2:
-                st.info("Usa esto cuando un H:. pague Cápitas, Tronco, etc.")
-                with st.form("pago_hh"):
-                    fecha_pago = st.date_input("Fecha Pago", datetime.today())
+            # --- TAB 3: PAGO INDIVIDUAL ---
+            with tabs[2]:
+                with st.form("pago_ind"):
+                    st.info("Registrar pago manual (Tronco, Iniciación, Abonos parciales)")
                     ws_dir = sh.worksheet("DIRECTORIO")
-                    lista_hh = ws_dir.col_values(2)[1:] # Nombres
-                    lista_ids = ws_dir.col_values(1)[1:] # IDs
-                    dict_hh = dict(zip(lista_hh, lista_ids))
-                    
-                    nombre_selec = st.selectbox("Hermano que paga", lista_hh)
-                    concepto = st.text_input("Concepto", "Pago Cápita")
-                    monto = st.number_input("Monto Recibido", min_value=0.0, step=10.0)
-                    
-                    if st.form_submit_button("Registrar Ingreso"):
-                        id_h = dict_hh[nombre_selec]
-                        # 1. Registrar en Cuenta Individual (TESORERIA)
-                        ws_tes = sh.worksheet("TESORERIA")
-                        ws_tes.append_row([
-                            fecha_pago.strftime("%d/%m/%Y"), str(id_h), concepto, "Abono", monto
-                        ])
-                        # 2. Registrar en Caja General (LIBRO_CAJA)
-                        ws_caja = sh.worksheet("LIBRO_CAJA")
-                        ws_caja.append_row([
-                            fecha_pago.strftime("%d/%m/%Y"), f"{concepto} ({nombre_selec})", "Ingreso Interno", monto, 0, ""
-                        ])
-                        st.success("Pago registrado en ambas cuentas.")
+                    nombres = ws_dir.col_values(2)[1:]
+                    ids = ws_dir.col_values(1)[1:]
+                    # Validación por si las listas no coinciden
+                    if len(nombres) == len(ids):
+                        dic_hh = dict(zip(nombres, ids))
+                        sel = st.selectbox("Hermano que paga", nombres)
+                        conc = st.text_input("Concepto", "Abono a cuenta")
+                        mont = st.number_input("Monto Recibido", min_value=0.0, step=50.0)
+                        
+                        if st.form_submit_button("💰 Registrar Ingreso"):
+                            ws_tes = sh.worksheet("TESORERIA")
+                            ws_caja = sh.worksheet("LIBRO_CAJA")
+                            h = datetime.today().strftime("%d/%m/%Y")
+                            ws_tes.append_row([h, str(dic_hh[sel]), conc, "Abono", mont])
+                            ws_caja.append_row([h, f"{conc} ({sel})", "Ingreso Interno", mont, 0, ""])
+                            st.success("Pago registrado exitosamente.")
+                    else:
+                        st.error("Error en Directorio: Las columnas ID y Nombre no tienen el mismo tamaño.")
 
-            # --- TAB 3: REGISTRAR GASTO ---
-            with tab3:
-                st.error("Usa esto para Pagos a GL, Compras, Cenas, etc.")
-                with st.form("gasto_gral"):
-                    fecha_gasto = st.date_input("Fecha Gasto", datetime.today())
-                    concepto_gasto = st.text_input("Concepto", "Pago a Gr:. Tes:.")
-                    categoria = st.selectbox("Categoría", ["Gasto Operativo", "Pago a GL", "Evento/Fiesta", "Beneficencia"])
-                    monto_gasto = st.number_input("Monto Pagado", min_value=0.0, step=10.0)
-                    ref = st.text_input("Referencia/Factura (Opcional)")
+            # --- TAB 4: GASTOS ---
+            with tabs[3]:
+                with st.form("gasto"):
+                    st.error("Registrar Salida de Dinero (Caja)")
+                    f = st.date_input("Fecha Gasto", datetime.today())
+                    c = st.text_input("Concepto del Gasto")
+                    cat = st.selectbox("Categoría", ["Gasto Operativo", "Pago a GL", "Ágape/Evento", "Beneficencia", "Otros"])
+                    m = st.number_input("Monto Pagado", min_value=0.0, step=50.0)
+                    ref = st.text_input("Referencia / Factura (Opcional)")
                     
-                    if st.form_submit_button("Registrar Salida"):
+                    if st.form_submit_button("💸 Registrar Salida"):
                         ws_caja = sh.worksheet("LIBRO_CAJA")
-                        ws_caja.append_row([
-                            fecha_gasto.strftime("%d/%m/%Y"), concepto_gasto, categoria, 0, monto_gasto, ref
-                        ])
-                        st.success("Gasto descontado de Caja General.")
+                        ws_caja.append_row([f.strftime("%d/%m/%Y"), c, cat, 0, m, ref])
+                        st.success("Gasto registrado en Libro de Caja.")
+
+            # --- TAB 5: AUDITORÍA POR H:. (NUEVO) ---
+            with tabs[4]:
+                st.subheader("🔍 Auditoría Individual")
+                st.caption("Consulta el estado de cuenta detallado de cualquier Hermano.")
+                
+                ws_dir = sh.worksheet("DIRECTORIO")
+                nombres = ws_dir.col_values(2)[1:]
+                ids = ws_dir.col_values(1)[1:]
+                dic_hh = dict(zip(nombres, ids))
+                
+                target_h = st.selectbox("Seleccionar Hermano a auditar:", nombres)
+                
+                if target_h:
+                    target_id = str(dic_hh[target_h])
+                    
+                    # Traer datos filtrados
+                    ws_tes = sh.worksheet("TESORERIA")
+                    df_tes = pd.DataFrame(ws_tes.get_all_records())
+                    df_tes['ID_H'] = df_tes['ID_H'].astype(str)
+                    
+                    # Filtramos movimientos del H seleccionado
+                    movs_h = df_tes[df_tes['ID_H'] == target_id]
+                    
+                    if not movs_h.empty:
+                        # Cálculos
+                        movs_h['Monto'] = pd.to_numeric(movs_h['Monto'], errors='coerce').fillna(0)
+                        cargos = movs_h[movs_h['Tipo'] == 'Cargo']['Monto'].sum()
+                        abonos = movs_h[movs_h['Tipo'] == 'Abono']['Monto'].sum()
+                        saldo = cargos - abonos
+                        
+                        st.markdown("---")
+                        
+                        # Métricas grandes
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Total Cargado", f"${cargos:,.2f}")
+                        c2.metric("Total Pagado", f"${abonos:,.2f}")
+                        
+                        if saldo > 0:
+                            c3.metric("DEUDA ACTUAL", f"${saldo:,.2f}", f"Debe aprox. {int(saldo/MONTO_CAPITA)} cápitas", delta_color="inverse")
+                        elif saldo == 0:
+                            c3.metric("Estado", "A PLOMO", delta_color="normal")
+                        else:
+                            c3.metric("Saldo a Favor", f"${abs(saldo):,.2f}", delta_color="normal")
+                        
+                        # Tablas de detalle
+                        st.subheader("Historial de Movimientos")
+                        
+                        # Invertimos para ver lo más reciente arriba
+                        ver_tabla = movs_h[['Fecha', 'Concepto', 'Tipo', 'Monto']].iloc[::-1]
+                        
+                        def color_tipo(val):
+                            return 'color: red' if val == 'Cargo' else 'color: green; font-weight: bold'
+
+                        st.dataframe(
+                            ver_tabla.style.map(color_tipo, subset=['Tipo']).format({"Monto": "${:,.2f}"}),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Botón para exportar (Simulado, solo visual)
+                        st.caption(f"Mostrando {len(movs_h)} movimientos encontrados para {target_h}.")
+                        
+                    else:
+                        st.warning(f"El H:. {target_h} no tiene movimientos registrados en Tesorería.")
 
         # ------------------------------------------
         # SECCIÓN ADMIN: ALTA DE HH (INICIACIÓN)
@@ -752,6 +886,7 @@ def main():
 if __name__ == '__main__':
 
     main()
+
 
 
 
