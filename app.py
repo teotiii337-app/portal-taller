@@ -659,66 +659,112 @@ def main():
             # AHORA SON 5 PESTAÑAS (Se agregó la última de Auditoría)
             tabs = st.tabs(["⚡ Cápitas Masivas", "Balance General", "Pago Individual", "Registrar Gastos", "🔍 Auditoría por H:."])
             
-            # --- TAB 1: CÁPITAS MASIVAS ---
+# --- TAB 1: CÁPITAS MASIVAS (CON SELECCIÓN DE QUIÉN PAGA Y QUIÉN NO) ---
             with tabs[0]:
                 st.subheader(f"Gestión Mensual (${MONTO_CAPITA})")
+                
+                # 1. Selectores
                 col_m, col_b = st.columns([1,2])
                 mes = col_m.selectbox("Mes de Cobro", ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"])
                 anio = datetime.now().year
                 
-                with st.expander(f"1️⃣ Generar deuda de {mes} a todos"):
-                    st.warning(f"⚠️ Se cargará ${MONTO_CAPITA} a todos los HH:. Activos.")
-                    if st.button(f"Ejecutar Cargos {mes}"):
-                        ws_dir = sh.worksheet("DIRECTORIO")
-                        ws_tes = sh.worksheet("TESORERIA")
-                        df_hh = pd.DataFrame(ws_dir.get_all_records())
-                        activos = df_hh[df_hh['Estatus'] == 'Activo']
-                        
-                        filas = []
-                        hoy = datetime.today().strftime("%d/%m/%Y")
-                        for _, r in activos.iterrows():
-                            filas.append([hoy, str(r['ID_H']), f"Cápita {mes} {anio}", "Cargo", MONTO_CAPITA])
-                        
-                        ws_tes.append_rows(filas)
-                        st.success(f"✅ Se generaron {len(filas)} cargos.")
-
-                st.markdown("---")
-                st.write(f"### 2️⃣ Registrar Pagos de {mes}")
+                # 2. PREPARAR LA LISTA DE COBRO
                 ws_dir = sh.worksheet("DIRECTORIO")
                 df_hh = pd.DataFrame(ws_dir.get_all_records())
-                # Prevenir error si no hay datos
+                
                 if not df_hh.empty:
-                    activos = df_hh[df_hh['Estatus'] == 'Activo'][['ID_H', 'Nombre_Completo']]
-                    activos['PAGÓ'] = False
+                    # Filtramos solo activos
+                    candidatos_cobro = df_hh[df_hh['Estatus'] == 'Activo'][['ID_H', 'Nombre_Completo']].copy()
                     
-                    edited = st.data_editor(
-                        activos, 
+                    # Agregamos columna de Checkbox (Por defecto TODOS True)
+                    candidatos_cobro['APLICAR_COBRO'] = True
+                    
+                    st.write("---")
+                    st.write(f"1️⃣ **Confirmar Lista de Cobro para {mes}**")
+                    st.caption("Desmarca a los HH:. Honorarios o exentos de pago este mes.")
+                    
+                    # 3. TABLA EDITABLE (El Tesorero decide aquí quién paga)
+                    editor_cobro = st.data_editor(
+                        candidatos_cobro,
                         column_config={
-                            "PAGÓ": st.column_config.CheckboxColumn(default=False),
-                            "ID_H": st.column_config.TextColumn(disabled=True)
-                        }, 
-                        hide_index=True, 
+                            "APLICAR_COBRO": st.column_config.CheckboxColumn(
+                                "Generar Deuda",
+                                help="Si está marcado, se le cargará la deuda de este mes.",
+                                default=True
+                            ),
+                            "ID_H": st.column_config.TextColumn("ID", disabled=True),
+                            "Nombre_Completo": st.column_config.TextColumn("Hermano", disabled=True),
+                        },
+                        hide_index=True,
                         use_container_width=True
                     )
                     
-                    if st.button("💾 Registrar Pagos Marcados"):
-                        pagadores = edited[edited['PAGÓ'] == True]
-                        if not pagadores.empty:
+                    # Contamos a cuántos se les va a cobrar
+                    total_a_cobrar = editor_cobro['APLICAR_COBRO'].sum()
+                    
+                    # 4. BOTÓN DE EJECUCIÓN
+                    if st.button(f"⚡ Generar Cargos a {total_a_cobrar} HH:."):
+                        if total_a_cobrar > 0:
                             ws_tes = sh.worksheet("TESORERIA")
-                            ws_caja = sh.worksheet("LIBRO_CAJA")
+                            
+                            # Filtramos solo los que quedaron marcados como TRUE
+                            lista_final = editor_cobro[editor_cobro['APLICAR_COBRO'] == True]
+                            
+                            filas_nuevas = []
                             hoy = datetime.today().strftime("%d/%m/%Y")
-                            f_tes, f_caja = [], []
                             
-                            for _, r in pagadores.iterrows():
-                                f_tes.append([hoy, str(r['ID_H']), f"Pago Cápita {mes}", "Abono", MONTO_CAPITA])
-                                f_caja.append([hoy, f"Cápita {mes} ({r['Nombre_Completo']})", "Ingreso Interno", MONTO_CAPITA, 0, ""])
+                            for _, r in lista_final.iterrows():
+                                filas_nuevas.append([
+                                    hoy, 
+                                    str(r['ID_H']), 
+                                    f"Cápita {mes} {anio}", 
+                                    "Cargo", 
+                                    MONTO_CAPITA
+                                ])
                             
-                            ws_tes.append_rows(f_tes)
-                            ws_caja.append_rows(f_caja)
-                            st.balloons()
-                            st.success(f"✅ {len(pagadores)} pagos registrados correctamente.")
+                            ws_tes.append_rows(filas_nuevas)
+                            st.success(f"✅ Éxito: Se generó la deuda de {mes} a {len(filas_nuevas)} hermanos.")
+                        else:
+                            st.warning("No seleccionaste a ningún hermano para cobrar.")
+                
                 else:
-                    st.error("No hay HH:. en el Directorio.")
+                    st.error("El Directorio está vacío.")
+
+                # --- SECCIÓN DE REGISTRO DE PAGOS (IGUAL QUE ANTES) ---
+                st.markdown("---")
+                st.write(f"### 2️⃣ Registrar Pagos Recibidos ({mes})")
+                
+                # Reutilizamos el dataframe original para limpiar la memoria visual
+                pagos_df = df_hh[df_hh['Estatus'] == 'Activo'][['ID_H', 'Nombre_Completo']].copy()
+                pagos_df['PAGÓ'] = False
+                
+                edited_pagos = st.data_editor(
+                    pagos_df, 
+                    key="editor_pagos_mensuales", # Clave única para no confundirse con la tabla de arriba
+                    column_config={
+                        "PAGÓ": st.column_config.CheckboxColumn(default=False),
+                        "ID_H": st.column_config.TextColumn(disabled=True)
+                    }, 
+                    hide_index=True, 
+                    use_container_width=True
+                )
+                
+                if st.button("💾 Registrar Pagos Marcados"):
+                    pagadores = edited_pagos[edited_pagos['PAGÓ'] == True]
+                    if not pagadores.empty:
+                        ws_tes = sh.worksheet("TESORERIA")
+                        ws_caja = sh.worksheet("LIBRO_CAJA")
+                        hoy = datetime.today().strftime("%d/%m/%Y")
+                        f_tes, f_caja = [], []
+                        
+                        for _, r in pagadores.iterrows():
+                            f_tes.append([hoy, str(r['ID_H']), f"Pago Cápita {mes}", "Abono", MONTO_CAPITA])
+                            f_caja.append([hoy, f"Cápita {mes} ({r['Nombre_Completo']})", "Ingreso Interno", MONTO_CAPITA, 0, ""])
+                        
+                        ws_tes.append_rows(f_tes)
+                        ws_caja.append_rows(f_caja)
+                        st.balloons()
+                        st.success(f"✅ {len(pagadores)} pagos registrados correctamente.")
 
             # --- TAB 2: BALANCE GENERAL (CORREGIDO) ---
             with tabs[1]:
@@ -886,6 +932,7 @@ def main():
 if __name__ == '__main__':
 
     main()
+
 
 
 
