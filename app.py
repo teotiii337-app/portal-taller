@@ -465,68 +465,189 @@ def main():
         # ------------------------------------------
         # SECCIÓN ADMIN: PASE DE LISTA
         # ------------------------------------------
+# ---------------------------------------------------------
+        # VISTA ADMIN: SECRETARÍA (PASE DE LISTA + REPORTES + KARDEX)
+        # ---------------------------------------------------------
         elif menu == "ADMIN: Pase de Lista":
-            st.header("📝 Pase de Lista")
+            st.header("📜 Secretaría y Archivo")
             
-            fecha_tenida = st.date_input("Fecha", datetime.today())
-            grado_tenida = st.selectbox("Grado de Cámara", [1, 2, 3])
-            
-            ws_dir = sh.worksheet("DIRECTORIO")
-            df_hh = pd.DataFrame(ws_dir.get_all_records())
-            
-            # Filtro: Mostrar solo HH con grado suficiente
-            hh_aptos = df_hh[df_hh['Grado_Actual'] >= grado_tenida]
-            
-            # Filtro: Candidatos (Grado inferior)
-            hh_candidatos = pd.DataFrame()
-            if grado_tenida > 1:
-                hh_candidatos = df_hh[df_hh['Grado_Actual'] == (grado_tenida - 1)]
+            # AHORA SON 3 PESTAÑAS
+            tab_lista, tab_reporte, tab_kardex = st.tabs(["📝 Pase de Lista", "📊 Reporte Global", "📂 Expediente H:."])
 
-            with st.form("form_lista"):
-                st.subheader("Asistencia Regular")
-                estados = {}
-                for idx, row in hh_aptos.iterrows():
-                    c1, c2 = st.columns([3,2])
-                    c1.write(f"**{row['Nombre_Completo']}**")
-                    estados[row['ID_H']] = c2.radio("Estado", ["Presente", "Falta", "Justif.", "Retardo"], key=row['ID_H'], horizontal=True, label_visibility="collapsed")
-                    st.divider()
+            # --- TAB 1: PASE DE LISTA (OPERATIVO) ---
+            with tab_lista:
+                st.subheader("Registrar Asistencia del Día")
+                fecha_tenida = st.date_input("Fecha de la Tenida", datetime.today())
+                grado_tenida = st.selectbox("Grado de Trabajos", [1, 2, 3])
                 
-                ids_candidatos = []
-                promocionar = False
-                if not hh_candidatos.empty and grado_tenida > 1:
-                    st.subheader("Candidatos / Ascensos")
-                    dict_cand = {row['ID_H']: row['Nombre_Completo'] for idx, row in hh_candidatos.iterrows()}
-                    ids_candidatos = st.multiselect("Seleccionar Candidatos presentes:", options=list(dict_cand.keys()), format_func=lambda x: dict_cand[x])
-                    if ids_candidatos:
-                        promocionar = st.checkbox(f"✅ Ascender automáticamente a {grado_tenida}º grado en Directorio")
+                ws_dir = sh.worksheet("DIRECTORIO")
+                df_hh = pd.DataFrame(ws_dir.get_all_records())
+                
+                # Filtros
+                hh_aptos = df_hh[df_hh['Grado_Actual'] >= grado_tenida]
+                hh_cand = df_hh[df_hh['Grado_Actual'] == (grado_tenida - 1)] if grado_tenida > 1 else pd.DataFrame()
 
-                if st.form_submit_button("💾 Guardar Lista"):
+                with st.form("form_lista_secre"):
+                    st.caption(f"Convocados: {len(hh_aptos)} HH:.")
+                    # Lista Regular
+                    estados = {}
+                    for _, row in hh_aptos.iterrows():
+                        c1, c2 = st.columns([3,2])
+                        c1.markdown(f"**{row['Nombre_Completo']}**")
+                        estados[row['ID_H']] = c2.radio("Edo", ["Presente", "Falta", "Justif.", "Retardo"], key=f"list_{row['ID_H']}", horizontal=True, label_visibility="collapsed")
+                        st.divider()
+                    
+                    # Lista Candidatos
+                    ids_cand = []
+                    promocionar = False
+                    if not hh_cand.empty:
+                        st.info("🎓 Candidatos / Ascensos")
+                        opciones_cand = {r['ID_H']: r['Nombre_Completo'] for _, r in hh_cand.iterrows()}
+                        ids_cand = st.multiselect("Candidatos presentes:", list(opciones_cand.keys()), format_func=lambda x: opciones_cand[x])
+                        if ids_cand:
+                            promocionar = st.checkbox(f"✅ Ascender a {grado_tenida}º grado (Actualizar Directorio)")
+
+                    if st.form_submit_button("💾 Guardar Asistencia"):
+                        ws_asis = sh.worksheet("ASISTENCIAS")
+                        rows = []
+                        for id_h, est in estados.items():
+                            rows.append([fecha_tenida.strftime("%d/%m/%Y"), grado_tenida, str(id_h), est, ""])
+                        for id_c in ids_cand:
+                            rows.append([fecha_tenida.strftime("%d/%m/%Y"), grado_tenida, str(id_c), "Presente", "Ceremonia Grado"])
+                        
+                        if rows: ws_asis.append_rows(rows)
+                        
+                        if promocionar and ids_cand:
+                            records = ws_dir.get_all_records()
+                            for i, rec in enumerate(records):
+                                if str(rec['ID_H']) in ids_cand:
+                                    ws_dir.update_cell(i + 2, 7, grado_tenida) # Col G
+                                    col_f = 9 if grado_tenida == 2 else 10
+                                    ws_dir.update_cell(i + 2, col_f, fecha_tenida.strftime("%d/%m/%Y"))
+                            st.success("Grados actualizados.")
+                        st.success("Asistencia guardada.")
+
+            # --- TAB 2: REPORTE GENERAL ---
+            with tab_reporte:
+                st.subheader("Semáforo de Asistencia")
+                ws_asis = sh.worksheet("ASISTENCIAS")
+                df_asis = pd.DataFrame(ws_asis.get_all_records())
+                ws_dir = sh.worksheet("DIRECTORIO")
+                df_dir = pd.DataFrame(ws_dir.get_all_records())
+                activos = df_dir[df_dir['Estatus'] == 'Activo']
+
+                if not df_asis.empty:
+                    df_asis['ID_H'] = df_asis['ID_H'].astype(str)
+                    stats = []
+                    for _, h in activos.iterrows():
+                        uid = str(h['ID_H'])
+                        regs = df_asis[df_asis['ID_H'] == uid]
+                        total = len(regs)
+                        asis = len(regs[regs['Estado'].isin(['Presente', 'Retardo', 'Comisión'])])
+                        faltas = len(regs[regs['Estado'] == 'Falta'])
+                        pct = (asis / total * 100) if total > 0 else 0
+                        stats.append({"Nombre": h['Nombre_Completo'], "Grado": h['Grado_Actual'], "% Asist": pct, "Total": total, "❌": faltas})
+                    
+                    df_stats = pd.DataFrame(stats).sort_values(by="% Asist")
+                    def color(v): return 'color: red; font-weight: bold' if v < 50 else ('color: green' if v >= 80 else 'color: orange')
+                    st.dataframe(df_stats.style.format({"% Asist": "{:.1f}%"}).map(color, subset=['% Asist']), use_container_width=True, hide_index=True)
+                else:
+                    st.info("No hay datos.")
+
+            # --- TAB 3: EXPEDIENTE INDIVIDUAL (LO NUEVO) ---
+            with tab_kardex:
+                st.subheader("📂 Expediente del Hermano")
+                
+                # 1. Selector de Hermano
+                ws_dir = sh.worksheet("DIRECTORIO")
+                nombres = ws_dir.col_values(2)[1:] # Nombres
+                ids = ws_dir.col_values(1)[1:] # IDs
+                dic_hh = dict(zip(nombres, ids))
+                
+                seleccionado = st.selectbox("Buscar Hermano:", nombres)
+                id_sel = str(dic_hh[seleccionado])
+                
+                if seleccionado:
+                    st.markdown("---")
+                    
+                    # 2. Obtener Datos Generales
+                    df_dir = pd.DataFrame(ws_dir.get_all_records())
+                    df_dir['ID_H'] = df_dir['ID_H'].astype(str)
+                    info_h = df_dir[df_dir['ID_H'] == id_sel].iloc[0]
+                    
+                    # 3. Obtener Datos Financieros
+                    ws_tes = sh.worksheet("TESORERIA")
+                    df_tes = pd.DataFrame(ws_tes.get_all_records())
+                    df_tes['ID_H'] = df_tes['ID_H'].astype(str)
+                    mi_tes = df_tes[df_tes['ID_H'] == id_sel]
+                    
+                    saldo = 0
+                    if not mi_tes.empty:
+                        mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
+                        saldo = mi_tes[mi_tes['Tipo'] == 'Cargo']['Monto'].sum() - mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
+
+                    # 4. Obtener Datos Asistencia
                     ws_asis = sh.worksheet("ASISTENCIAS")
-                    rows_to_add = []
+                    df_asis = pd.DataFrame(ws_asis.get_all_records())
+                    pct_asis = 0
+                    total_asis = 0
+                    if not df_asis.empty:
+                        df_asis['ID_H'] = df_asis['ID_H'].astype(str)
+                        mis_asis = df_asis[df_asis['ID_H'] == id_sel]
+                        total_asis = len(mis_asis)
+                        positivas = len(mis_asis[mis_asis['Estado'].isin(['Presente', 'Retardo'])])
+                        if total_asis > 0:
+                            pct_asis = (positivas / total_asis) * 100
                     
-                    # Regulares
-                    for id_h, estado in estados.items():
-                        rows_to_add.append([fecha_tenida.strftime("%d/%m/%Y"), grado_tenida, str(id_h), estado, ""])
+                    # --- VISTA DEL EXPEDIENTE ---
                     
-                    # Candidatos
-                    for id_can in ids_candidatos:
-                        rows_to_add.append([fecha_tenida.strftime("%d/%m/%Y"), grado_tenida, str(id_can), "Presente", "Ceremonia Grado"])
+                    # A. ENCABEZADO (DATOS BIOGRÁFICOS)
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Grado", f"{info_h['Grado_Actual']}º")
+                    c2.metric("Estatus", info_h['Estatus'])
+                    c3.metric("Usuario", info_h['Usuario'])
+                    c4.metric("ID", f"#{info_h['ID_H']}")
                     
-                    ws_asis.append_rows(rows_to_add)
+                    # Fechas Importantes (Expandible)
+                    with st.expander("📅 Fechas Masónicas (Iniciación, Aumento, Exaltación)"):
+                        f1, f2, f3 = st.columns(3)
+                        f1.write(f"**Iniciación:** {info_h['Fecha_Inic']}")
+                        f2.write(f"**Aumento:** {info_h['Fecha_Aum'] if info_h['Fecha_Aum'] else '-'}")
+                        f3.write(f"**Exaltación:** {info_h['Fecha_Exal'] if info_h['Fecha_Exal'] else '-'}")
+
+                    st.divider()
+
+                    # B. BLOQUE DE ESTADÍSTICAS (FINANZAS Y ASISTENCIA)
+                    col_fin, col_asis = st.columns(2)
                     
-                    # Lógica de Promoción automática
-                    if promocionar:
-                        # Actualizar celda por celda (algo lento pero seguro)
-                        cell_list = []
-                        for id_can in ids_candidatos:
-                            cell = ws_dir.find(str(id_can))
-                            # Actualizar Grado (Col G=7)
-                            ws_dir.update_cell(cell.row, 7, grado_tenida)
-                            # Actualizar Fecha (I=9 o J=10)
-                            col_fecha = 9 if grado_tenida == 2 else 10
-                            ws_dir.update_cell(cell.row, col_fecha, fecha_tenida.strftime("%d/%m/%Y"))
-                    
-                    st.success("Lista guardada correctamente")
+                    with col_fin:
+                        st.markdown("### 💰 Tesorería")
+                        if saldo > 0:
+                            st.error(f"Adeudo Total: **${saldo:,.2f}**")
+                            st.caption(f"Equivale a aprox. {int(saldo/450)} cápitas.")
+                        elif saldo == 0:
+                            st.success("Al corriente ($0.00)")
+                        else:
+                            st.success(f"Saldo a Favor: ${abs(saldo):,.2f}")
+                        
+                        # Tabla mini de últimos 3 movimientos
+                        if not mi_tes.empty:
+                            st.caption("Últimos movimientos:")
+                            st.dataframe(mi_tes.tail(3)[['Fecha', 'Concepto', 'Tipo', 'Monto']], use_container_width=True, hide_index=True)
+
+                    with col_asis:
+                        st.markdown("### 📝 Asistencia")
+                        st.metric("Porcentaje Histórico", f"{pct_asis:.1f}%")
+                        st.write(f"Ha asistido a **{int((pct_asis/100)*total_asis)}** de **{total_asis}** convocatorias.")
+                        
+                        # Tabla mini de últimas 3 faltas (si las hay)
+                        if not df_asis.empty:
+                            faltas = mis_asis[mis_asis['Estado'] == 'Falta']
+                            if not faltas.empty:
+                                st.caption("Últimas Faltas:")
+                                st.dataframe(faltas.tail(3)[['Fecha_Tenida', 'Grado_Tenida']], use_container_width=True, hide_index=True)
+                            else:
+                                st.caption("¡Sin faltas registradas!")
 
         # ------------------------------------------
         # SECCIÓN ADMIN: TESORERÍA GENERAL (V.M. y TES.)
@@ -631,6 +752,7 @@ def main():
 if __name__ == '__main__':
 
     main()
+
 
 
 
