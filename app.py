@@ -351,6 +351,84 @@ def main():
                         
                         ws_dir.append_row(row)
                         st.success("Creado.")
+                with t_edit:
+                                st.subheader("✏️ Actualizar Expediente")
+                                
+                                # 1. Cargar datos frescos
+                                ws_dir = sh.worksheet("DIRECTORIO")
+                                df_edit = pd.DataFrame(ws_dir.get_all_records())
+                                
+                                if not df_edit.empty:
+                                    # 2. Selector de Hermano
+                                    opciones_edit = df_edit['Nombre_Completo'].tolist()
+                                    seleccion_edit = st.selectbox("Seleccionar Hermano para Editar:", opciones_edit)
+                                    
+                                    if seleccion_edit:
+                                        # 3. Obtener datos actuales del seleccionado
+                                        # Encontramos el índice en el DataFrame
+                                        idx = df_edit[df_edit['Nombre_Completo'] == seleccion_edit].index[0]
+                                        datos_h = df_edit.iloc[idx]
+                                        
+                                        # Calculamos la fila real en Excel (Index + 2 porque Excel tiene Header y empieza en 1)
+                                        fila_excel = idx + 2
+                                        
+                                        st.info(f"Editando a: **{seleccion_edit}** (ID: {datos_h['ID_H']})")
+                                        
+                                        with st.form("form_edicion_completa"):
+                                            # A) Datos de Contacto
+                                            st.markdown("##### 📱 Contacto")
+                                            c_e1, c_e2 = st.columns(2)
+                                            # Usamos .get() para evitar error si la columna no existe aún
+                                            n_cel = c_e1.text_input("Celular", value=str(datos_h.get('Tel_Celular', '')))
+                                            n_mail = c_e2.text_input("Email", value=str(datos_h.get('Email', '')))
+                                            n_dir = st.text_input("Dirección", value=str(datos_h.get('Direccion', '')))
+                                            
+                                            # B) Datos Masónicos
+                                            st.markdown("##### ∴ Carrera Masónica")
+                                            c_m1, c_m2, c_m3 = st.columns(3)
+                                            
+                                            # Manejo seguro del Grado (convertir a int para el index del selectbox)
+                                            grado_actual_val = 1
+                                            try:
+                                                grado_actual_val = int(datos_h.get('Grado_Actual', 1))
+                                            except:
+                                                pass
+                                            # Restamos 1 porque el index de la lista [1,2,3] empieza en 0
+                                            idx_grado = max(0, min(grado_actual_val - 1, 2))
+                                            
+                                            n_grado = c_m1.selectbox("Grado Actual", [1, 2, 3], index=idx_grado)
+                                            n_faum = c_m2.text_input("Fecha Aumento", value=str(datos_h.get('Fecha_Aum', '')))
+                                            n_fexal = c_m3.text_input("Fecha Exaltación", value=str(datos_h.get('Fecha_Exal', '')))
+                                            
+                                            # C) Curriculum
+                                            st.markdown("##### 📜 Historial de Cargos")
+                                            n_cargos = st.text_area("Cargos Desempeñados", value=str(datos_h.get('Historial_Cargos', '')), height=100)
+                                            
+                                            st.markdown("---")
+                                            if st.form_submit_button("💾 Guardar Cambios"):
+                                                try:
+                                                    # Actualizamos celdas específicas usando coordenadas (Fila, Columna)
+                                                    # Basado en tu estructura A-AG:
+                                                    # Grado=Col 7(G), Celular=Col 11(K), Email=Col 12(L), Direccion=Col 13(M)
+                                                    # Aumento=Col 15(O), Exaltacion=Col 16(P), Cargos=Col 33(AG)
+                                                    
+                                                    ws_dir.update_cell(fila_excel, 7, n_grado)
+                                                    ws_dir.update_cell(fila_excel, 11, n_cel)
+                                                    ws_dir.update_cell(fila_excel, 12, n_mail)
+                                                    ws_dir.update_cell(fila_excel, 13, n_dir)
+                                                    ws_dir.update_cell(fila_excel, 15, n_faum)
+                                                    ws_dir.update_cell(fila_excel, 16, n_fexal)
+                                                    ws_dir.update_cell(fila_excel, 33, n_cargos)
+                                                    
+                                                    st.success("✅ Expediente actualizado correctamente.")
+                                                    # Recargar para ver cambios (truco visual)
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(f"Error al actualizar en Google Sheets: {e}")
+                                else:
+                                    st.warning("El directorio está vacío.")
+                                        
+                    
 
 
         # ---------------------------------------------------------
@@ -437,4 +515,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
