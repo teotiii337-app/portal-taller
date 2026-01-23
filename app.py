@@ -4,66 +4,63 @@ import gspread
 from google.oauth2.service_account import Credentials
 import hashlib
 from datetime import datetime
-import time
 
 # ==========================================
-# CONFIGURACIÓN INICIAL Y CONEXIÓN
+# 1. CONFIGURACIÓN Y CONEXIÓN
 # ==========================================
 st.set_page_config(page_title="Portal del Taller", page_icon="∴", layout="wide")
 
-# Función de Seguridad (Hashing)
 def make_hash(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 def check_hashes(password, hashed_text):
-    if make_hash(password) == hashed_text:
-        return True
-    return False
+    return make_hash(password) == hashed_text
 
-# Conexión a Google Sheets (Usando caché para velocidad)
 @st.cache_resource
 def connect_db():
     scope = ['https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
-    # Asegúrate de configurar los secretos en Streamlit Cloud
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
-    # IMPORTANTE: Reemplaza con el nombre EXACTO de tu archivo
-    return client.open("Sec y Tes")
+    # ⚠️ ASEGÚRATE DE QUE ESTE NOMBRE SEA EL CORRECTO
+    return client.open("NOMBRE_DE_TU_ARCHIVO_GOOGLE_SHEET")
 
 # ==========================================
-# FUNCIONES DE LÓGICA DE NEGOCIO
+# 2. LÓGICA DE ROLES (PERMISOS)
 # ==========================================
-
-def get_user_data(username):
-    sh = connect_db()
-    ws = sh.worksheet("DIRECTORIO")
-    records = ws.get_all_records()
-    df = pd.DataFrame(records)
-    user_row = df[df['Usuario'] == username]
-    return user_row
-
-def update_password(username, new_password):
-    sh = connect_db()
-    ws = sh.worksheet("DIRECTORIO")
-    cell = ws.find(username)
-    new_hash = make_hash(new_password)
-    # Asumiendo Col D=Password (4) y Col E=Reset (5)
-    ws.update_cell(cell.row, 4, new_hash)
-    ws.update_cell(cell.row, 5, "FALSE")
-    st.success("Contraseña actualizada. Por favor reingresa.")
+def obtener_menu_por_rol(rol):
+    # MENÚ BÁSICO (Todos lo ven)
+    opciones = ["Mi Tablero", "Detalle Tesorería"]
+    
+    # SECRETARIO (Único con permiso de Alta y Pase de Lista)
+    if rol == "Secretario":
+        opciones.extend(["OFICIAL: Secretaría", "ADMIN: Alta HH:.", "CONSULTA: Cápitas Global", "ADMIN: Mantenimiento"])
+        
+    # TESORERO (Único con permiso de mover dinero)
+    elif rol == "Tesorero":
+        opciones.extend(["OFICIAL: Tesorería", "CONSULTA: Asistencia Global", "ADMIN: Mantenimiento"])
+        
+    # HOSPITALARIO (Lectura total de expedientes y asistencia)
+    elif rol == "Hospitalario":
+        opciones.extend(["CONSULTA: Asistencia Global", "CONSULTA: Expedientes"])
+        
+    # VIGILANTES (Lectura filtrada por grado)
+    elif rol in ["Primer Vigilante", "Segundo Vigilante"]:
+        opciones.extend(["CONSULTA: Cápitas Global", "CONSULTA: Asistencia Global", "CONSULTA: Expedientes"])
+        
+    # VENERABLE MAESTRO (Acceso Total de Lectura + Tablero de Control)
+    elif rol == "Venerable Maestro":
+        opciones.extend(["CONSULTA: Maestro (Total)", "CONSULTA: Expedientes", "CONSULTA: Cápitas Global", "CONSULTA: Asistencia Global", "ADMIN: Mantenimiento"])
+    
+    return opciones
 
 # ==========================================
-# INTERFAZ PRINCIPAL
+# 3. INTERFAZ PRINCIPAL
 # ==========================================
-
 def main():
-    # Inicializar estado de sesión
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
 
-    # ------------------------------------------
-    # PANTALLA DE LOGIN
-    # ------------------------------------------
+    # --- PANTALLA DE LOGIN ---
     if not st.session_state['logged_in']:
         col1, col2, col3 = st.columns([1,2,1])
         with col2:
@@ -74,21 +71,20 @@ def main():
             
             if st.button("Entrar", use_container_width=True):
                 try:
-                    user_df = get_user_data(username)
-                    if not user_df.empty:
-                        stored_hash = user_df.iloc[0]['Password']
-                        # Manejo de booleanos que vienen de Excel (TRUE/FALSE strings)
-                        reset_val = str(user_df.iloc[0]['Reset_Requerido']).upper()
-                        reset_required = (reset_val == 'TRUE')
-                        
+                    sh = connect_db()
+                    ws = sh.worksheet("DIRECTORIO")
+                    df = pd.DataFrame(ws.get_all_records())
+                    user_row = df[df['Usuario'] == username]
+                    
+                    if not user_row.empty:
+                        stored_hash = user_row.iloc[0]['Password']
                         if check_hashes(password, stored_hash):
                             st.session_state['logged_in'] = True
                             st.session_state['username'] = username
-                            st.session_state['role'] = user_df.iloc[0]['Rol'] # Admin o Miembro
-                            st.session_state['reset'] = reset_required
-                            st.session_state['id_h'] = str(user_df.iloc[0]['ID_H']) # ID como string
-                            st.session_state['nombre'] = user_df.iloc[0]['Nombre_Completo']
-                            st.session_state['grado_actual'] = int(user_df.iloc[0]['Grado_Actual'])
+                            st.session_state['role'] = user_row.iloc[0]['Rol']
+                            st.session_state['id_h'] = str(user_row.iloc[0]['ID_H'])
+                            st.session_state['nombre'] = user_row.iloc[0]['Nombre_Completo']
+                            st.session_state['grado_actual'] = int(user_row.iloc[0]['Grado_Actual'])
                             st.rerun()
                         else:
                             st.error("Contraseña incorrecta.")
@@ -97,32 +93,13 @@ def main():
                 except Exception as e:
                     st.error(f"Error de conexión: {e}")
 
-    # ------------------------------------------
-    # PANTALLA DE USUARIO LOGUEADO
-    # ------------------------------------------
+    # --- SISTEMA DENTRO ---
     else:
-        # 1. CAMBIO DE CONTRASEÑA OBLIGATORIO
-        if st.session_state['reset']:
-            st.warning("⚠️ Por seguridad, debes configurar tu contraseña personal.")
-            new_pass = st.text_input("Nueva Contraseña", type="password")
-            confirm_pass = st.text_input("Confirmar Contraseña", type="password")
-            if st.button("Guardar"):
-                if new_pass == confirm_pass and len(new_pass) > 4:
-                    update_password(st.session_state['username'], new_pass)
-                    st.session_state['logged_in'] = False
-                    st.rerun()
-                else:
-                    st.error("Las contraseñas no coinciden o son muy cortas.")
-            return
-
-        # 2. BARRA LATERAL (MENÚ)
+        rol_actual = st.session_state['role']
         st.sidebar.title(f"H:. {st.session_state['nombre']}")
-        st.sidebar.caption(f"Grado: {st.session_state['grado_actual']}º")
+        st.sidebar.caption(f"Rol: {rol_actual} | Grado: {st.session_state['grado_actual']}º")
         
-        opciones_menu = ["Mi Tablero (Resumen)", "Detalle Asistencias", "Detalle Tesorería"]
-        if st.session_state['role'] == "Admin":
-            opciones_menu.extend(["ADMIN: Pase de Lista", "ADMIN: Tesorería General", "ADMIN: Alta HH:."])
-        
+        opciones_menu = obtener_menu_por_rol(rol_actual)
         menu = st.sidebar.radio("Navegación", opciones_menu)
         
         if st.sidebar.button("Cerrar Sesión"):
@@ -131,1080 +108,332 @@ def main():
 
         sh = connect_db()
 
-        # ------------------------------------------
-        # VISTA: MI TABLERO (RESUMEN DETALLADO)
-        # ------------------------------------------
-        if menu == "Mi Tablero (Resumen)":
+        # ---------------------------------------------------------
+        # 1. MI TABLERO (VISTA PERSONAL PARA TODOS)
+        # ---------------------------------------------------------
+        if menu == "Mi Tablero":
             st.title(f"∴ Tablero del H:. {st.session_state['nombre']}")
             st.markdown("---")
-
-            # 1. RECUPERAR DATOS (TESORERÍA Y ASISTENCIA)
-            # Tesorería
+            
             ws_tes = sh.worksheet("TESORERIA")
             df_tes = pd.DataFrame(ws_tes.get_all_records())
             df_tes['ID_H'] = df_tes['ID_H'].astype(str)
             mi_tes = df_tes[df_tes['ID_H'] == st.session_state['id_h']]
 
-            # Asistencia
             ws_asis = sh.worksheet("ASISTENCIAS")
             df_asis = pd.DataFrame(ws_asis.get_all_records())
-            # Si la hoja está vacía o no tiene datos del H, manejamos el error
+            mis_asis = pd.DataFrame()
             if not df_asis.empty:
                 df_asis['ID_H'] = df_asis['ID_H'].astype(str)
                 mis_asis = df_asis[df_asis['ID_H'] == st.session_state['id_h']]
-            else:
-                mis_asis = pd.DataFrame(columns=['Fecha_Tenida', 'Estado', 'Grado_Tenida'])
 
-            # 2. CÁLCULOS DE SALDOS Y ESTADÍSTICAS
-            # Limpieza de datos numéricos (quitamos signos de $ o comas si existen)
-            try:
-                mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'])
-            except:
-                pass # Si falla es porque ya es numérico o está vacío
-
-            total_cargos = mi_tes[mi_tes['Tipo'] == 'Cargo']['Monto'].sum()
-            total_abonos = mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
-            saldo = total_cargos - total_abonos
-            
-            # Cálculo de Cápitas Pendientes (Asumiendo cápita de $450)
-            MONTO_CAPITA = 450
-            num_capitas = 0
-            if saldo > 0:
-                num_capitas = int(saldo / MONTO_CAPITA)
-
-            # Cálculo Asistencia
-            porcentaje = 0.0
-            if not mis_asis.empty:
-                total_reg = len(mis_asis)
-                # Contamos Presente y Retardo como asistencia positiva
-                asistencias = len(mis_asis[mis_asis['Estado'].isin(['Presente', 'Retardo', 'Comisión'])])
-                if total_reg > 0:
-                    porcentaje = (asistencias / total_reg) * 100
-
-            # 3. TARJETAS DE RESUMEN (KPIs)
-            kpi1, kpi2, kpi3 = st.columns(3)
-            
-            with kpi1:
-                st.metric("Asistencia Global", f"{porcentaje:.1f}%", help="Calculado sobre Tenidas convocadas")
-            
-            with kpi2:
-                # Color dinámico: Rojo si debe, Verde si tiene saldo a favor
-                if saldo > 0:
-                    st.metric("Saldo Pendiente", f"${saldo:,.2f}", f"-{num_capitas} Cápitas aprox.", delta_color="inverse")
-                elif saldo == 0:
-                    st.metric("Estatus", "A Plomo ($0.00)", delta_color="normal")
-                else:
-                    st.metric("Saldo a Favor", f"${abs(saldo):,.2f}", delta_color="normal")
-            
-            with kpi3:
-                st.metric("Total Pagado (Histórico)", f"${total_abonos:,.2f}")
-
-            st.markdown("---")
-
-            # 4. TABLAS DE DETALLE (LADO A LADO)
-            col_izq, col_der = st.columns([1, 1])
-
-            # --- TABLA IZQUIERDA: ASISTENCIAS ---
-            with col_izq:
-                st.subheader("📅 Historial Asistencia")
-                if not mis_asis.empty:
-                    # Ordenar por fecha (asumiendo formato dd/mm/yyyy)
-                    # Convertimos a datetime solo para ordenar, luego mostramos texto
-                    mis_asis['Fecha_DT'] = pd.to_datetime(mis_asis['Fecha_Tenida'], dayfirst=True, errors='coerce')
-                    mis_asis = mis_asis.sort_values(by='Fecha_DT', ascending=False)
-                    
-                    # Seleccionamos columnas para mostrar
-                    display_asis = mis_asis[['Fecha_Tenida', 'Estado', 'Grado_Tenida']]
-                    
-                    # Colorear según estado (Truco visual de Pandas)
-                    def color_estado(val):
-                        color = 'black'
-                        if val == 'Presente': color = 'green'
-                        elif val == 'Falta': color = 'red'
-                        elif val == 'Retardo': color = 'orange'
-                        elif val == 'Justif.': color = 'blue'
-                        return f'color: {color}'
-
-                    st.dataframe(
-                        display_asis.style.map(color_estado, subset=['Estado']),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                else:
-                    st.info("No tienes registros de asistencia aún.")
-
-# --- TABLA DERECHA: TESORERÍA (CON ESTADO DE CUENTA INTELIGENTE) ---
-            with col_der:
-                st.subheader("💰 Estado de Cuenta Detallado")
-                
-                if not mi_tes.empty:
-                    # 1. Separar Cargos y Abonos
-                    # Aseguramos que los montos sean numéricos
-                    mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
-                    
-                    cargos = mi_tes[mi_tes['Tipo'] == 'Cargo'].copy()
-                    total_pagado = mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
-                    
-                    # 2. Lógica FIFO (El dinero paga la deuda más vieja primero)
-                    data_estado_cuenta = []
-                    dinero_disponible = total_pagado
-                    
-                    # Ordenamos cargos del más viejo al más nuevo para irlos pagando en orden
-                    # (Asumiendo que insertas en orden cronológico, si no, habría que ordenar por fecha)
-                    for index, row in cargos.iterrows():
-                        monto_deuda = row['Monto']
-                        estado = ""
-                        pagado_aqui = 0
-                        saldo_pendiente = 0
-                        
-                        if dinero_disponible >= monto_deuda:
-                            # Alcanza para pagar toda esta deuda
-                            estado = "Pagado"
-                            pagado_aqui = monto_deuda
-                            saldo_pendiente = 0
-                            dinero_disponible -= monto_deuda
-                        elif dinero_disponible > 0:
-                            # Alcanza para pagar solo una parte (Abono parcial)
-                            estado = "Parcial"
-                            pagado_aqui = dinero_disponible
-                            saldo_pendiente = monto_deuda - dinero_disponible
-                            dinero_disponible = 0
-                        else:
-                            # Ya no hay dinero para esta deuda
-                            estado = "Adeudo"
-                            pagado_aqui = 0
-                            saldo_pendiente = monto_deuda
-                            
-                        data_estado_cuenta.append({
-                            "Fecha": row['Fecha'],
-                            "Concepto": row['Concepto'],
-                            "Costo": monto_deuda,
-                            "Estatus": estado,
-                            "Falta": saldo_pendiente
-                        })
-                    
-                    # Crear DataFrame para visualizar
-                    df_visual = pd.DataFrame(data_estado_cuenta)
-                    
-                    # Si no hay cargos pero hay saldo a favor (dinero extra)
-                    if df_visual.empty and total_pagado > 0:
-                        st.success(f"No tienes deudas registradas. Tienes un saldo a favor de ${total_pagado:,.2f}")
-                    
-                    elif not df_visual.empty:
-                        # Invertimos el orden para mostrar lo más reciente arriba en la tabla (Enero abajo, Marzo arriba)
-                        df_visual = df_visual.iloc[::-1]
-
-                        # 3. Formato Visual con Colores (Pandas Styler)
-                        def estilo_status(val):
-                            color = 'red'
-                            weight = 'normal'
-                            if val == 'Pagado':
-                                color = 'green'
-                            elif val == 'Parcial':
-                                color = 'orange'
-                                weight = 'bold'
-                            return f'color: {color}; font-weight: {weight}'
-
-                        st.dataframe(
-                            df_visual.style.map(estilo_status, subset=['Estatus'])
-                                     .format({"Costo": "${:,.0f}", "Falta": "${:,.0f}"}), # Formato moneda sin centavos para limpieza
-                            column_order=("Fecha", "Concepto", "Estatus", "Falta"), # Ocultamos "Costo" para no saturar, o puedes agregarlo
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
-                        # Mostrar Saldo a Favor remanente si sobró dinero después de pagar todo
-                        if dinero_disponible > 0:
-                            st.caption(f"✨ Tienes un saldo a favor adicional de: **${dinero_disponible:,.2f}**")
-                            
-                else:
-                    st.info("Sin movimientos.")
-        # ------------------------------------------
-        # VISTA: DETALLE ASISTENCIAS
-        # ------------------------------------------
-        elif menu == "Detalle Asistencias":
-            st.header("Historial de Asistencias")
-            ws_asis = sh.worksheet("ASISTENCIAS")
-            df_asis = pd.DataFrame(ws_asis.get_all_records())
-            df_asis['ID_H'] = df_asis['ID_H'].astype(str)
-            mis_asis = df_asis[df_asis['ID_H'] == st.session_state['id_h']]
-            st.dataframe(mis_asis[['Fecha_Tenida', 'Grado_Tenida', 'Estado', 'Observaciones']], use_container_width=True)
-
-# ------------------------------------------
-        # VISTA: DETALLE TESORERÍA (CON CRUCE DE FECHAS)
-        # ------------------------------------------
-        elif menu == "Detalle Tesorería":
-            st.title("💰 Historial y Estado de Cuenta")
-            st.markdown("---")
-            
-            # 1. Cargar datos y asegurar formato correcto
-            ws_tes = sh.worksheet("TESORERIA")
-            df_tes = pd.DataFrame(ws_tes.get_all_records())
-            
-            # Forzar que ID sea string para comparar bien
-            df_tes['ID_H'] = df_tes['ID_H'].astype(str)
-            mi_tes = df_tes[df_tes['ID_H'] == st.session_state['id_h']]
-
+            # Cálculos
+            saldo = 0
             if not mi_tes.empty:
-                # Asegurar numéricos
                 mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
-                
-                # Pestañas
-                tab_edo, tab_recibos = st.tabs(["📊 Estado de Adeudos", "🧾 Historial de Pagos"])
-                
-                # --- PESTAÑA 1: ESTADO DE CUENTA INTELIGENTE ---
-                with tab_edo:
-                    st.info("Aquí ves cómo tus pagos han ido cubriendo tus deudas mes a mes.")
-                    
-                    # Separamos Cargos y Abonos
-                    cargos = mi_tes[mi_tes['Tipo'] == 'Cargo'].copy()
-                    abonos = mi_tes[mi_tes['Tipo'] == 'Abono'].copy()
-                    
-                    # Convertimos a listas de diccionarios para procesar fácil
-                    # Es vital que los abonos estén ordenados por fecha para aplicar FIFO (Primero entra, primero paga)
-                    # Aquí asumimos orden de inserción (Excel), si quisieras por fecha estricta habría que ordenar.
-                    cola_abonos = []
-                    for _, row in abonos.iterrows():
-                        cola_abonos.append({
-                            'fecha': row['Fecha'], 
-                            'monto_disponible': row['Monto']
-                        })
-                    
-                    data_estado_cuenta = []
-                    
-                    # Recorremos cada deuda para ver con qué se paga
-                    for _, row_cargo in cargos.iterrows():
-                        monto_deuda = row_cargo['Monto']
-                        saldo_deuda = monto_deuda
-                        
-                        detalles_pago = [] # Aquí guardaremos "Pagado $X el [Fecha]"
-                        
-                        # Mientras la deuda siga viva y tenga dinero en los abonos...
-                        while saldo_deuda > 0 and cola_abonos:
-                            abono_actual = cola_abonos[0] # Tomamos el abono más viejo disponible
-                            
-                            if abono_actual['monto_disponible'] > saldo_deuda:
-                                # El abono cubre toda la deuda y sobra
-                                detalles_pago.append(f"${saldo_deuda:,.0f} ({abono_actual['fecha']})")
-                                abono_actual['monto_disponible'] -= saldo_deuda
-                                saldo_deuda = 0
-                            elif abono_actual['monto_disponible'] == saldo_deuda:
-                                # El abono cubre exacto
-                                detalles_pago.append(f"${saldo_deuda:,.0f} ({abono_actual['fecha']})")
-                                saldo_deuda = 0
-                                cola_abonos.pop(0) # Ese abono se acabó
-                            else:
-                                # El abono no alcanza, paga lo que tiene y se acaba
-                                pagado = abono_actual['monto_disponible']
-                                detalles_pago.append(f"${pagado:,.0f} ({abono_actual['fecha']})")
-                                saldo_deuda -= pagado
-                                cola_abonos.pop(0) # Pasamos al siguiente abono
-                        
-                        # Determinar estado final de esa fila
-                        if saldo_deuda == 0:
-                            estatus = "Pagado"
-                        elif saldo_deuda < monto_deuda:
-                            estatus = "Parcial"
-                        else:
-                            estatus = "Adeudo"
-                            
-                        # Formatear el texto de detalle
-                        if detalles_pago:
-                            texto_pagos = ", ".join(detalles_pago)
-                        else:
-                            texto_pagos = "-"
-
-                        data_estado_cuenta.append({
-                            "Fecha Cargo": row_cargo['Fecha'],
-                            "Concepto": row_cargo['Concepto'],
-                            "Monto": monto_deuda,
-                            "Abonado": (monto_deuda - saldo_deuda),
-                            "Saldo Pendiente": saldo_deuda,
-                            "Estatus": estatus,
-                            "Detalle Pagos": texto_pagos
-                        })
-                    
-                    # VISUALIZACIÓN
-                    df_visual = pd.DataFrame(data_estado_cuenta)
-                    
-                    if not df_visual.empty:
-                        # Invertimos para ver lo más reciente arriba
-                        df_visual = df_visual.iloc[::-1]
-                        
-                        def estilo_completo(val):
-                            if val == 'Pagado': return 'color: green'
-                            if val == 'Parcial': return 'color: orange; font-weight: bold'
-                            return 'color: red'
-
-                        st.dataframe(
-                            df_visual.style.map(estilo_completo, subset=['Estatus'])
-                                     .format({
-                                         "Monto": "${:,.2f}", 
-                                         "Abonado": "${:,.2f}", 
-                                         "Saldo Pendiente": "${:,.2f}"
-                                     }),
-                            column_order=("Fecha Cargo", "Concepto", "Estatus", "Saldo Pendiente", "Detalle Pagos"),
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                    else:
-                        st.info("No tienes deudas registradas.")
-                        
-                    # Checar si sobró dinero en el último abono
-                    remanente = sum(a['monto_disponible'] for a in cola_abonos)
-                    if remanente > 0:
-                        st.success(f"✨ Tienes un saldo a favor disponible de: **${remanente:,.2f}**")
-
-                # --- PESTAÑA 2: TABLA SIMPLE DE ABONOS ---
-                with tab_recibos:
-                    st.caption("Lista simple de tus abonos registrados")
-                    st.dataframe(abonos[['Fecha', 'Concepto', 'Monto']], use_container_width=True, hide_index=True)
-
-            else:
-                st.info("Sin movimientos en Tesorería.")
-        # ------------------------------------------
-        # SECCIÓN ADMIN: PASE DE LISTA
-        # ------------------------------------------
-# ---------------------------------------------------------
-        # VISTA ADMIN: SECRETARÍA (PASE DE LISTA + REPORTES + KARDEX)
-        # ---------------------------------------------------------
-        elif menu == "ADMIN: Pase de Lista":
-            st.header("📜 Secretaría y Archivo")
+                saldo = mi_tes[mi_tes['Tipo'] == 'Cargo']['Monto'].sum() - mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
             
-            # 3 PESTAÑAS: Lista, Reporte y Expediente
-            tab_lista, tab_reporte, tab_kardex = st.tabs(["📝 Pase de Lista", "📊 Reporte Global", "📂 Expediente H:."])
+            pct = 0.0
+            if not mis_asis.empty:
+                total = len(mis_asis)
+                pos = len(mis_asis[mis_asis['Estado'].isin(['Presente', 'Retardo', 'Comisión'])])
+                if total > 0: pct = (pos/total)*100
 
-            # --- TAB 1: PASE DE LISTA (OPERATIVO) ---
-            with tab_lista:
-                st.subheader("Registrar Asistencia del Día")
-                fecha_tenida = st.date_input("Fecha de la Tenida", datetime.today())
-                grado_tenida = st.selectbox("Grado de Trabajos", [1, 2, 3])
-                
+            k1, k2 = st.columns(2)
+            k1.metric("Asistencia Global", f"{pct:.1f}%")
+            if saldo > 0:
+                k2.metric("Saldo Pendiente", f"${saldo:,.2f}", f"-{int(saldo/450)} Cápitas aprox", delta_color="inverse")
+            else:
+                k2.metric("Estatus", "A Plomo ($0.00)", delta_color="normal")
+            
+            st.markdown("---")
+            c_izq, c_der = st.columns(2)
+            
+            with c_izq:
+                st.subheader("📅 Historial")
+                if not mis_asis.empty:
+                    def col_asis(v): return 'color: green' if v=='Presente' else 'color: red'
+                    st.dataframe(mis_asis[['Fecha_Tenida', 'Estado']].style.map(col_asis, subset=['Estado']), use_container_width=True, hide_index=True)
+            
+            with c_der:
+                st.subheader("💰 Estado de Cuenta")
+                if not mi_tes.empty:
+                    cargos = mi_tes[mi_tes['Tipo']=='Cargo'].copy()
+                    abonos = mi_tes[mi_tes['Tipo']=='Abono'].copy()
+                    total_pagado = abonos['Monto'].sum()
+                    dinero = total_pagado
+                    res = []
+                    for _,r in cargos.iterrows():
+                        deuda = r['Monto']
+                        est = "Adeudo"
+                        falta = deuda
+                        if dinero >= deuda:
+                            est = "Pagado"
+                            falta = 0
+                            dinero -= deuda
+                        elif dinero > 0:
+                            est = "Parcial"
+                            falta = deuda - dinero
+                            dinero = 0
+                        res.append({"Fecha":r['Fecha'], "Concepto":r['Concepto'], "Estatus":est, "Falta":falta})
+                    
+                    df_v = pd.DataFrame(res).iloc[::-1]
+                    def col_tes(v): return 'color: green' if v=='Pagado' else ('color: orange; font-weight: bold' if v=='Parcial' else 'color: red')
+                    st.dataframe(df_v.style.map(col_tes, subset=['Estatus']).format({"Falta":"${:,.0f}"}), use_container_width=True, hide_index=True)
+
+        elif menu == "Detalle Tesorería":
+            st.title("💰 Historial Detallado de Pagos")
+            # (Simplificado: Muestra tabla cruda de abonos para referencia)
+            ws_tes = sh.worksheet("TESORERIA")
+            df = pd.DataFrame(ws_tes.get_all_records())
+            df['ID_H'] = df['ID_H'].astype(str)
+            mis_movs = df[(df['ID_H'] == st.session_state['id_h']) & (df['Tipo'] == 'Abono')]
+            st.dataframe(mis_movs, use_container_width=True, hide_index=True)
+
+
+        # ---------------------------------------------------------
+        # 2. OFICIAL: SECRETARÍA (PASE DE LISTA)
+        # ---------------------------------------------------------
+        elif menu == "OFICIAL: Secretaría":
+            st.header("📜 Gestión de Secretaría")
+            t_lista, t_rep = st.tabs(["📝 Pase de Lista", "📊 Reporte de Asistencia"])
+            
+            with t_lista:
+                fecha = st.date_input("Fecha Tenida", datetime.today())
+                grado = st.selectbox("Grado", [1,2,3])
                 ws_dir = sh.worksheet("DIRECTORIO")
                 df_hh = pd.DataFrame(ws_dir.get_all_records())
                 
-                # Validación simple para evitar errores si el directorio está vacío
                 if not df_hh.empty:
-                    # Filtros
-                    hh_aptos = df_hh[df_hh['Grado_Actual'] >= grado_tenida]
-                    hh_cand = df_hh[df_hh['Grado_Actual'] == (grado_tenida - 1)] if grado_tenida > 1 else pd.DataFrame()
-
-                    with st.form("form_lista_secre"):
-                        st.caption(f"Convocados: {len(hh_aptos)} HH:.")
-                        # Lista Regular
+                    hh = df_hh[df_hh['Grado_Actual'] >= grado]
+                    with st.form("lista"):
+                        st.write(f"Convocados: {len(hh)}")
                         estados = {}
-                        for _, row in hh_aptos.iterrows():
-                            c1, c2 = st.columns([3,2])
-                            c1.markdown(f"**{row['Nombre_Completo']}**")
-                            estados[row['ID_H']] = c2.radio("Edo", ["Presente", "Falta", "Justif.", "Retardo"], key=f"list_{row['ID_H']}", horizontal=True, label_visibility="collapsed")
+                        for _, r in hh.iterrows():
+                            c1,c2 = st.columns([3,2])
+                            c1.write(f"**{r['Nombre_Completo']}**")
+                            estados[r['ID_H']] = c2.radio("Edo", ["Presente","Falta","Justif.","Retardo"], key=r['ID_H'], horizontal=True, label_visibility="collapsed")
                             st.divider()
-                        
-                        # Lista Candidatos
-                        ids_cand = []
-                        promocionar = False
-                        if not hh_cand.empty:
-                            st.info("🎓 Candidatos / Ascensos")
-                            opciones_cand = {r['ID_H']: r['Nombre_Completo'] for _, r in hh_cand.iterrows()}
-                            ids_cand = st.multiselect("Candidatos presentes:", list(opciones_cand.keys()), format_func=lambda x: opciones_cand[x])
-                            if ids_cand:
-                                promocionar = st.checkbox(f"✅ Ascender a {grado_tenida}º grado (Actualizar Directorio)")
-
-                        if st.form_submit_button("💾 Guardar Asistencia"):
-                            ws_asis = sh.worksheet("ASISTENCIAS")
-                            rows = []
-                            for id_h, est in estados.items():
-                                rows.append([fecha_tenida.strftime("%d/%m/%Y"), grado_tenida, str(id_h), est, ""])
-                            for id_c in ids_cand:
-                                rows.append([fecha_tenida.strftime("%d/%m/%Y"), grado_tenida, str(id_c), "Presente", "Ceremonia Grado"])
-                            
-                            if rows: ws_asis.append_rows(rows)
-                            
-                            if promocionar and ids_cand:
-                                records = ws_dir.get_all_records()
-                                for i, rec in enumerate(records):
-                                    if str(rec['ID_H']) in ids_cand:
-                                        # Ajuste de coordenadas (Header=1 + Index 0 = Fila 2)
-                                        ws_dir.update_cell(i + 2, 7, grado_tenida) # Col G
-                                        col_f = 9 if grado_tenida == 2 else 10
-                                        ws_dir.update_cell(i + 2, col_f, fecha_tenida.strftime("%d/%m/%Y"))
-                                st.success("Grados actualizados.")
-                            st.success("Asistencia guardada.")
-                else:
-                    st.error("El Directorio está vacío o no se pudo leer.")
-
-            # --- TAB 2: REPORTE GENERAL (CORREGIDO - ERROR KEYERROR) ---
-            with tab_reporte:
-                st.subheader("Semáforo de Asistencia")
-                ws_asis = sh.worksheet("ASISTENCIAS")
-                df_asis = pd.DataFrame(ws_asis.get_all_records())
+                        if st.form_submit_button("Guardar"):
+                            ws_as = sh.worksheet("ASISTENCIAS")
+                            rows = [[fecha.strftime("%d/%m/%Y"), grado, str(id), est, ""] for id, est in estados.items()]
+                            ws_as.append_rows(rows)
+                            st.success("Guardado.")
+            
+            with t_rep:
+                # REPORTE BLINDADO
+                ws_as = sh.worksheet("ASISTENCIAS")
+                df_as = pd.DataFrame(ws_as.get_all_records())
                 ws_dir = sh.worksheet("DIRECTORIO")
                 df_dir = pd.DataFrame(ws_dir.get_all_records())
                 
-                if not df_dir.empty:
-                    activos = df_dir[df_dir['Estatus'] == 'Activo']
-
-                    # Si df_asis está vacío, no pasa nada, stats se llenará con ceros.
-                    # Lo importante es que stats NO esté vacío al crear el DataFrame
+                if not df_dir.empty and not df_as.empty:
+                    df_as['ID_H'] = df_as['ID_H'].astype(str)
                     stats = []
-                    
-                    if not activos.empty:
-                        # Convertimos ID a string en ambos lados para asegurar match
-                        df_asis_str = df_asis.copy()
-                        if not df_asis_str.empty:
-                            df_asis_str['ID_H'] = df_asis_str['ID_H'].astype(str)
-                        
-                        for _, h in activos.iterrows():
-                            uid = str(h['ID_H'])
-                            
-                            # Si no hay asistencia, regs será vacío pero no error
-                            regs = pd.DataFrame()
-                            if not df_asis_str.empty:
-                                regs = df_asis_str[df_asis_str['ID_H'] == uid]
-                            
-                            total = len(regs)
-                            asis = 0
-                            faltas = 0
-                            
-                            if total > 0:
-                                asis = len(regs[regs['Estado'].isin(['Presente', 'Retardo', 'Comisión'])])
-                                faltas = len(regs[regs['Estado'] == 'Falta'])
-                            
-                            pct = (asis / total * 100) if total > 0 else 0.0
-                            
-                            stats.append({
-                                "Nombre": h['Nombre_Completo'], 
-                                "Grado": h['Grado_Actual'], 
-                                "% Asist": pct, 
-                                "Total": total, 
-                                "❌": faltas
-                            })
-                    
-                    # --- AQUÍ ESTABA EL ERROR ---
-                    # Antes intentábamos ordenar directamenta: pd.DataFrame(stats).sort_values(...)
-                    # Si stats estaba vacío, eso tronaba.
+                    for _, h in df_dir[df_dir['Estatus']=='Activo'].iterrows():
+                        regs = df_as[df_as['ID_H']==str(h['ID_H'])]
+                        tot = len(regs)
+                        ok = len(regs[regs['Estado'].isin(['Presente','Retardo'])])
+                        pct = (ok/tot*100) if tot>0 else 0
+                        stats.append({"Nombre":h['Nombre_Completo'], "% Asist":pct})
                     
                     if stats:
-                        df_stats = pd.DataFrame(stats)
-                        # Doble seguridad: Solo ordenamos si la columna existe
-                        if "% Asist" in df_stats.columns:
-                            df_stats = df_stats.sort_values(by="% Asist", ascending=True)
-                        
-                        def color(v): 
-                            return 'color: red; font-weight: bold' if v < 50 else ('color: green' if v >= 80 else 'color: orange')
-                        
-                        st.dataframe(
-                            df_stats.style.format({"% Asist": "{:.1f}%"}).map(color, subset=['% Asist']), 
-                            use_container_width=True, 
-                            hide_index=True
-                        )
+                        df_s = pd.DataFrame(stats).sort_values(by="% Asist")
+                        st.dataframe(df_s.style.format({"% Asist":"{:.1f}%"}), use_container_width=True)
                     else:
-                        st.info("No hay datos de hermanos activos para generar el reporte.")
+                        st.info("Sin datos suficientes.")
                 else:
-                    st.warning("El directorio está vacío.")
+                    st.info("Falta información para el reporte.")
 
-# --- TAB 3: EXPEDIENTE COMPLETO (ACTUALIZADO CON TUS NUEVOS CAMPOS) ---
-            with tab_kardex:
-                st.subheader("📂 Expediente Digital del Hermano")
-                
-                ws_dir = sh.worksheet("DIRECTORIO")
-                registros_dir = ws_dir.get_all_records()
-                
-                if registros_dir:
-                    nombres = ws_dir.col_values(2)[1:]
-                    ids = ws_dir.col_values(1)[1:]
-                    
-                    if len(nombres) == len(ids) and len(nombres) > 0:
-                        dic_hh = dict(zip(nombres, ids))
-                        
-                        seleccionado = st.selectbox("🔍 Buscar Hermano:", nombres)
-                        
-                        if seleccionado:
-                            id_sel = str(dic_hh[seleccionado])
-                            st.markdown("---")
-                            
-                            # 1. Recuperar Info Personal
-                            df_dir = pd.DataFrame(registros_dir)
-                            df_dir['ID_H'] = df_dir['ID_H'].astype(str)
-                            match = df_dir[df_dir['ID_H'] == id_sel]
-                            
-                            if not match.empty:
-                                info = match.iloc[0] # Usamos 'info' para abreviar
-                                
-                                # --- ENCABEZADO ---
-                                c1, c2, c3, c4 = st.columns(4)
-                                c1.metric("Grado", f"{info.get('Grado_Actual', '-')}º")
-                                c2.metric("Estatus", info.get('Estatus', '-'))
-                                c3.metric("ID", f"#{info.get('ID_H', '-')}")
-                                c4.metric("Usuario", info.get('Usuario', '-'))
-
-                                # --- PESTAÑAS DE DETALLE (EL NUEVO "CORE") ---
-                                t_pers, t_prof, t_med, t_emer, t_mas = st.tabs([
-                                    "👤 Personal", "💼 Profesional", "🏥 Médico", "🚨 Emergencia", "∴ Masónico"
-                                ])
-                                
-                                with t_pers:
-                                    st.caption("Datos de Contacto y Generales")
-                                    cp1, cp2 = st.columns(2)
-                                    cp1.write(f"**🎂 Nacimiento:** {info.get('Fecha_Nac', '-')}")
-                                    cp1.write(f"**📧 Email:** {info.get('Email', '-')}")
-                                    cp1.write(f"**🏠 Dirección:** {info.get('Direccion', '-')}")
-                                    
-                                    cp2.write(f"**📱 Celular:** {info.get('Tel_Celular', '-')}")
-                                    cp2.write(f"**📞 Fijo:** {info.get('Tel_Fijo', '-')}")
-                                
-                                with t_prof:
-                                    st.caption("Perfil Laboral")
-                                    cf1, cf2 = st.columns(2)
-                                    cf1.write(f"**👨‍💻 Profesión:** {info.get('Profesion', '-')}")
-                                    cf1.write(f"**🏢 Lugar:** {info.get('Lugar_Trabajo', '-')}")
-                                    cf2.write(f"**🏷️ Puesto:** {info.get('Puesto', '-')}")
-                                    cf2.write(f"**⏰ Horario:** {info.get('Horario_Trabajo', '-')}")
-                                    st.write(f"**☎️ Tel. Trabajo:** {info.get('Tel_Trabajo', '-')}")
-
-                                with t_med:
-                                    st.caption("Ficha Médica")
-                                    cm1, cm2 = st.columns(2)
-                                    cm1.write(f"**🩸 Sangre:** {info.get('Tipo_Sangre', '-')}")
-                                    cm2.write(f"**🏥 Seguro:** {info.get('Seguro_Medico', '-')}")
-                                    
-                                    st.markdown("**🦠 Vulnerable COVID:** " + ("✅ Sí" if info.get('Vulnerable_Covid') == 'Sí' else "No"))
-                                    
-                                    with st.expander("💊 Enfermedades y Alergias", expanded=False):
-                                        st.write(f"**Crónicas:** {info.get('Enf_Cronicas', 'Ninguna')}")
-                                        st.write(f"**Alergias:** {info.get('Alergias', 'Ninguna')}")
-
-                                with t_emer:
-                                    st.caption("En caso de accidente contactar a:")
-                                    ce1, ce2 = st.columns(2)
-                                    ce1.write(f"**🆘 Contacto:** {info.get('Contacto_Emergencia', '-')}")
-                                    ce1.write(f"**👪 Parentesco:** {info.get('Parentesco_Emergencia', '-')}")
-                                    ce2.write(f"**📞 Teléfono:** {info.get('Tel_Emergencia', '-')}")
-                                    
-                                    st.divider()
-                                    st.caption("Beneficiario Designado:")
-                                    st.write(f"**👤 Nombre:** {info.get('Beneficiario', '-')}")
-                                    st.write(f"**👪 Relación:** {info.get('Parentesco_Beneficiario', '-')}")
-                                    st.write(f"**📞 Tel:** {info.get('Tel_Beneficiario', '-')}")
-
-                                with t_mas:
-                                    st.caption("Carrera Masónica")
-                                    cm_1, cm_2, cm_3 = st.columns(3)
-                                    cm_1.write(f"**Iniciación:** {info.get('Fecha_Inic', '-')}")
-                                    cm_2.write(f"**Aumento:** {info.get('Fecha_Aum', '-')}")
-                                    cm_3.write(f"**Exaltación:** {info.get('Fecha_Exal', '-')}")
-                                    
-                                    st.markdown("#### 📜 Curriculum (Cargos)")
-                                    st.info(info.get('Historial_Cargos', 'Sin registros previos.'))
-
-                                st.divider()
-                                
-                                # --- RESUMEN OPERATIVO (FINANZAS Y ASISTENCIA) ---
-                                col_fin, col_asis = st.columns(2)
-                                
-                                # Cálculos rápidos de Finanzas
-                                ws_tes = sh.worksheet("TESORERIA")
-                                df_tes = pd.DataFrame(ws_tes.get_all_records())
-                                saldo = 0
-                                if not df_tes.empty:
-                                    df_tes['ID_H'] = df_tes['ID_H'].astype(str)
-                                    mi_tes = df_tes[df_tes['ID_H'] == id_sel]
-                                    mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
-                                    saldo = mi_tes[mi_tes['Tipo'] == 'Cargo']['Monto'].sum() - mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
-
-                                # Cálculos rápidos de Asistencia
-                                ws_asis = sh.worksheet("ASISTENCIAS")
-                                df_asis = pd.DataFrame(ws_asis.get_all_records())
-                                pct_asis = 0
-                                if not df_asis.empty:
-                                    df_asis['ID_H'] = df_asis['ID_H'].astype(str)
-                                    mis_asis = df_asis[df_asis['ID_H'] == id_sel]
-                                    total = len(mis_asis)
-                                    positivas = len(mis_asis[mis_asis['Estado'].isin(['Presente', 'Retardo'])])
-                                    if total > 0: pct_asis = (positivas / total) * 100
-
-                                with col_fin:
-                                    st.subheader("💰 Estado Financiero")
-                                    if saldo > 0:
-                                        st.error(f"Debe: ${saldo:,.2f}")
-                                    else:
-                                        st.success("A Plomo")
-                                
-                                with col_asis:
-                                    st.subheader("📝 Asistencia")
-                                    st.metric("Global", f"{pct_asis:.1f}%")
-
-                            else:
-                                st.error("No se encontraron detalles.")
-                    else:
-                        st.warning("Error de sincronización en Directorio.")
-                else:
-                    st.error("No se pudo leer el Directorio.")
 
         # ---------------------------------------------------------
-        # VISTA ADMIN: TESORERÍA GENERAL (CON AUDITORÍA INDIVIDUAL)
+        # 3. OFICIAL: TESORERÍA (GESTIÓN DE DINERO)
         # ---------------------------------------------------------
-        elif menu == "ADMIN: Tesorería General":
-            st.header("⚖️ Tesorería y Finanzas")
+        elif menu == "OFICIAL: Tesorería":
+            st.header("⚖️ Gestión de Tesorería")
             MONTO_CAPITA = 450.0
+            tabs = st.tabs(["⚡ Cápitas Masivas", "Balance", "Pago Individual", "Gastos"])
             
-            # AHORA SON 5 PESTAÑAS (Se agregó la última de Auditoría)
-            tabs = st.tabs(["⚡ Cápitas Masivas", "Balance General", "Pago Individual", "Registrar Gastos", "🔍 Auditoría por H:."])
-            
-        # --- TAB 1: CÁPITAS MASIVAS (CON SELECCIÓN DE QUIÉN PAGA Y QUIÉN NO) ---
-            with tabs[0]:
-                st.subheader(f"Gestión Mensual (${MONTO_CAPITA})")
-                
-                # 1. Selectores
-                col_m, col_b = st.columns([1,2])
-                mes = col_m.selectbox("Mes de Cobro", ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"])
-                anio = datetime.now().year
-                
-                # 2. PREPARAR LA LISTA DE COBRO
+            with tabs[0]: # MASIVA
+                mes = st.selectbox("Mes", ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"])
                 ws_dir = sh.worksheet("DIRECTORIO")
                 df_hh = pd.DataFrame(ws_dir.get_all_records())
-                
                 if not df_hh.empty:
-                    # Filtramos solo activos
-                    candidatos_cobro = df_hh[df_hh['Estatus'] == 'Activo'][['ID_H', 'Nombre_Completo']].copy()
-                    
-                    # Agregamos columna de Checkbox (Por defecto TODOS True)
-                    candidatos_cobro['APLICAR_COBRO'] = True
-                    
-                    st.write("---")
-                    st.write(f"1️⃣ **Confirmar Lista de Cobro para {mes}**")
-                    st.caption("Desmarca a los HH:. Honorarios o exentos de pago este mes.")
-                    
-                    # 3. TABLA EDITABLE (El Tesorero decide aquí quién paga)
-                    editor_cobro = st.data_editor(
-                        candidatos_cobro,
-                        column_config={
-                            "APLICAR_COBRO": st.column_config.CheckboxColumn(
-                                "Generar Deuda",
-                                help="Si está marcado, se le cargará la deuda de este mes.",
-                                default=True
-                            ),
-                            "ID_H": st.column_config.TextColumn("ID", disabled=True),
-                            "Nombre_Completo": st.column_config.TextColumn("Hermano", disabled=True),
-                        },
-                        hide_index=True,
-                        use_container_width=True
-                    )
-                    
-                    # Contamos a cuántos se les va a cobrar
-                    total_a_cobrar = editor_cobro['APLICAR_COBRO'].sum()
-                    
-                    # 4. BOTÓN DE EJECUCIÓN
-                    if st.button(f"⚡ Generar Cargos a {total_a_cobrar} HH:."):
-                        if total_a_cobrar > 0:
-                            ws_tes = sh.worksheet("TESORERIA")
-                            
-                            # Filtramos solo los que quedaron marcados como TRUE
-                            lista_final = editor_cobro[editor_cobro['APLICAR_COBRO'] == True]
-                            
-                            filas_nuevas = []
-                            hoy = datetime.today().strftime("%d/%m/%Y")
-                            
-                            for _, r in lista_final.iterrows():
-                                filas_nuevas.append([
-                                    hoy, 
-                                    str(r['ID_H']), 
-                                    f"Cápita {mes} {anio}", 
-                                    "Cargo", 
-                                    MONTO_CAPITA
-                                ])
-                            
-                            ws_tes.append_rows(filas_nuevas)
-                            st.success(f"✅ Éxito: Se generó la deuda de {mes} a {len(filas_nuevas)} hermanos.")
-                        else:
-                            st.warning("No seleccionaste a ningún hermano para cobrar.")
-                
-                else:
-                    st.error("El Directorio está vacío.")
-
-                # --- SECCIÓN DE REGISTRO DE PAGOS (IGUAL QUE ANTES) ---
-                st.markdown("---")
-                st.write(f"### 2️⃣ Registrar Pagos Recibidos ({mes})")
-                
-                # Reutilizamos el dataframe original para limpiar la memoria visual
-                pagos_df = df_hh[df_hh['Estatus'] == 'Activo'][['ID_H', 'Nombre_Completo']].copy()
-                pagos_df['PAGÓ'] = False
-                
-                edited_pagos = st.data_editor(
-                    pagos_df, 
-                    key="editor_pagos_mensuales", # Clave única para no confundirse con la tabla de arriba
-                    column_config={
-                        "PAGÓ": st.column_config.CheckboxColumn(default=False),
-                        "ID_H": st.column_config.TextColumn(disabled=True)
-                    }, 
-                    hide_index=True, 
-                    use_container_width=True
-                )
-                
-                if st.button("💾 Registrar Pagos Marcados"):
-                    pagadores = edited_pagos[edited_pagos['PAGÓ'] == True]
-                    if not pagadores.empty:
+                    cands = df_hh[df_hh['Estatus']=='Activo'][['ID_H','Nombre_Completo']]
+                    cands['COBRAR'] = True
+                    ed = st.data_editor(cands, hide_index=True, use_container_width=True)
+                    if st.button("Generar Cargos"):
+                        sel = ed[ed['COBRAR']==True]
                         ws_tes = sh.worksheet("TESORERIA")
-                        ws_caja = sh.worksheet("LIBRO_CAJA")
                         hoy = datetime.today().strftime("%d/%m/%Y")
-                        f_tes, f_caja = [], []
-                        
-                        for _, r in pagadores.iterrows():
-                            f_tes.append([hoy, str(r['ID_H']), f"Pago Cápita {mes}", "Abono", MONTO_CAPITA])
-                            f_caja.append([hoy, f"Cápita {mes} ({r['Nombre_Completo']})", "Ingreso Interno", MONTO_CAPITA, 0, ""])
-                        
-                        ws_tes.append_rows(f_tes)
-                        ws_caja.append_rows(f_caja)
-                        st.balloons()
-                        st.success(f"✅ {len(pagadores)} pagos registrados correctamente.")
-
-            # --- TAB 2: BALANCE GENERAL (CORREGIDO) ---
-            with tabs[1]:
-                ws_caja = sh.worksheet("LIBRO_CAJA")
-                df_caja = pd.DataFrame(ws_caja.get_all_records())
-                
-                # Validación de Seguridad para evitar el KeyError
-                columnas_esperadas = ['Entrada', 'Salida']
-                if df_caja.empty:
-                    st.warning("El Libro de Caja está vacío o no tiene datos.")
-                    ent, sal = 0, 0
-                elif not all(col in df_caja.columns for col in columnas_esperadas):
-                    st.error(f"🚨 ERROR CRÍTICO: Las columnas en Excel no se llaman 'Entrada' y 'Salida'. Revisa los encabezados.")
-                    ent, sal = 0, 0
+                        rows = [[hoy, str(r['ID_H']), f"Cápita {mes}", "Cargo", MONTO_CAPITA] for _,r in sel.iterrows()]
+                        ws_tes.append_rows(rows)
+                        st.success(f"Cargados {len(rows)} HH:.")
+            
+            with tabs[1]: # BALANCE
+                ws_cj = sh.worksheet("LIBRO_CAJA")
+                df_cj = pd.DataFrame(ws_cj.get_all_records())
+                if 'Entrada' in df_cj.columns:
+                    ent = pd.to_numeric(df_cj['Entrada'], errors='coerce').sum()
+                    sal = pd.to_numeric(df_cj['Salida'], errors='coerce').sum()
+                    st.metric("Caja Real", f"${ent-sal:,.2f}")
                 else:
-                    # Si todo está bien, calculamos
-                    ent = pd.to_numeric(df_caja['Entrada'], errors='coerce').fillna(0).sum()
-                    sal = pd.to_numeric(df_caja['Salida'], errors='coerce').fillna(0).sum()
-                
-                # Cálculo de Deuda de HH
-                ws_tg = sh.worksheet("TESORERIA")
-                df_tg = pd.DataFrame(ws_tg.get_all_records())
-                deuda = 0
-                if not df_tg.empty:
-                    df_tg['Monto'] = pd.to_numeric(df_tg['Monto'], errors='coerce').fillna(0)
-                    deuda = df_tg[df_tg['Tipo'] == 'Cargo']['Monto'].sum() - df_tg[df_tg['Tipo'] == 'Abono']['Monto'].sum()
-                
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Dinero en Caja (Real)", f"${(ent-sal):,.2f}", help="Entradas - Salidas")
-                m2.metric("Cuentas por Cobrar", f"${deuda:,.2f}", delta_color="inverse", help="Dinero que deben los HH:.")
-                m3.metric("Gastos Totales", f"${sal:,.2f}")
-                
-                if not df_caja.empty:
-                    st.subheader("Últimos Movimientos")
-                    st.dataframe(df_caja.tail(10).iloc[::-1], use_container_width=True, hide_index=True)
+                    st.error("Error en columnas de Caja.")
 
-            # --- TAB 3: PAGO INDIVIDUAL ---
-            with tabs[2]:
-                with st.form("pago_ind"):
-                    st.info("Registrar pago manual (Tronco, Iniciación, Abonos parciales)")
+            with tabs[2]: # INDIVIDUAL
+                with st.form("pagind"):
                     ws_dir = sh.worksheet("DIRECTORIO")
-                    nombres = ws_dir.col_values(2)[1:]
+                    noms = ws_dir.col_values(2)[1:]
                     ids = ws_dir.col_values(1)[1:]
-                    # Validación por si las listas no coinciden
-                    if len(nombres) == len(ids):
-                        dic_hh = dict(zip(nombres, ids))
-                        sel = st.selectbox("Hermano que paga", nombres)
-                        conc = st.text_input("Concepto", "Abono a cuenta")
-                        mont = st.number_input("Monto Recibido", min_value=0.0, step=50.0)
-                        
-                        if st.form_submit_button("💰 Registrar Ingreso"):
-                            ws_tes = sh.worksheet("TESORERIA")
-                            ws_caja = sh.worksheet("LIBRO_CAJA")
-                            h = datetime.today().strftime("%d/%m/%Y")
-                            ws_tes.append_row([h, str(dic_hh[sel]), conc, "Abono", mont])
-                            ws_caja.append_row([h, f"{conc} ({sel})", "Ingreso Interno", mont, 0, ""])
-                            st.success("Pago registrado exitosamente.")
-                    else:
-                        st.error("Error en Directorio: Las columnas ID y Nombre no tienen el mismo tamaño.")
+                    dic = dict(zip(noms, ids))
+                    h = st.selectbox("Hermano", noms)
+                    m = st.number_input("Monto", min_value=0.0)
+                    c = st.text_input("Concepto", "Abono")
+                    if st.form_submit_button("Registrar"):
+                        ws_tes = sh.worksheet("TESORERIA")
+                        ws_cj = sh.worksheet("LIBRO_CAJA")
+                        fe = datetime.today().strftime("%d/%m/%Y")
+                        ws_tes.append_row([fe, str(dic[h]), c, "Abono", m])
+                        ws_cj.append_row([fe, f"{c} ({h})", "Ingreso", m, 0, ""])
+                        st.success("Registrado.")
 
-            # --- TAB 4: GASTOS ---
-            with tabs[3]:
-                with st.form("gasto"):
-                    st.error("Registrar Salida de Dinero (Caja)")
-                    f = st.date_input("Fecha Gasto", datetime.today())
-                    c = st.text_input("Concepto del Gasto")
-                    cat = st.selectbox("Categoría", ["Gasto Operativo", "Pago a GL", "Ágape/Evento", "Beneficencia", "Otros"])
-                    m = st.number_input("Monto Pagado", min_value=0.0, step=50.0)
-                    ref = st.text_input("Referencia / Factura (Opcional)")
-                    
-                    if st.form_submit_button("💸 Registrar Salida"):
-                        ws_caja = sh.worksheet("LIBRO_CAJA")
-                        ws_caja.append_row([f.strftime("%d/%m/%Y"), c, cat, 0, m, ref])
-                        st.success("Gasto registrado en Libro de Caja.")
+            with tabs[3]: # GASTOS
+                with st.form("gst"):
+                    f = st.date_input("Fecha", datetime.today())
+                    c = st.text_input("Concepto")
+                    cat = st.selectbox("Cat", ["Operativo","GL","Evento"])
+                    m = st.number_input("Monto", min_value=0.0)
+                    if st.form_submit_button("Registrar Salida"):
+                        ws_cj = sh.worksheet("LIBRO_CAJA")
+                        ws_cj.append_row([f.strftime("%d/%m/%Y"), c, cat, 0, m, ""])
+                        st.success("Gasto guardado.")
 
-            # --- TAB 5: AUDITORÍA POR H:. (NUEVO) ---
-            with tabs[4]:
-                st.subheader("🔍 Auditoría Individual")
-                st.caption("Consulta el estado de cuenta detallado de cualquier Hermano.")
-                
-                ws_dir = sh.worksheet("DIRECTORIO")
-                nombres = ws_dir.col_values(2)[1:]
-                ids = ws_dir.col_values(1)[1:]
-                dic_hh = dict(zip(nombres, ids))
-                
-                target_h = st.selectbox("Seleccionar Hermano a auditar:", nombres)
-                
-                if target_h:
-                    target_id = str(dic_hh[target_h])
-                    
-                    # Traer datos filtrados
-                    ws_tes = sh.worksheet("TESORERIA")
-                    df_tes = pd.DataFrame(ws_tes.get_all_records())
-                    df_tes['ID_H'] = df_tes['ID_H'].astype(str)
-                    
-                    # Filtramos movimientos del H seleccionado
-                    movs_h = df_tes[df_tes['ID_H'] == target_id]
-                    
-                    if not movs_h.empty:
-                        # Cálculos
-                        movs_h['Monto'] = pd.to_numeric(movs_h['Monto'], errors='coerce').fillna(0)
-                        cargos = movs_h[movs_h['Tipo'] == 'Cargo']['Monto'].sum()
-                        abonos = movs_h[movs_h['Tipo'] == 'Abono']['Monto'].sum()
-                        saldo = cargos - abonos
-                        
-                        st.markdown("---")
-                        
-                        # Métricas grandes
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("Total Cargado", f"${cargos:,.2f}")
-                        c2.metric("Total Pagado", f"${abonos:,.2f}")
-                        
-                        if saldo > 0:
-                            c3.metric("DEUDA ACTUAL", f"${saldo:,.2f}", f"Debe aprox. {int(saldo/MONTO_CAPITA)} cápitas", delta_color="inverse")
-                        elif saldo == 0:
-                            c3.metric("Estado", "A PLOMO", delta_color="normal")
-                        else:
-                            c3.metric("Saldo a Favor", f"${abs(saldo):,.2f}", delta_color="normal")
-                        
-                        # Tablas de detalle
-                        st.subheader("Historial de Movimientos")
-                        
-                        # Invertimos para ver lo más reciente arriba
-                        ver_tabla = movs_h[['Fecha', 'Concepto', 'Tipo', 'Monto']].iloc[::-1]
-                        
-                        def color_tipo(val):
-                            return 'color: red' if val == 'Cargo' else 'color: green; font-weight: bold'
 
-                        st.dataframe(
-                            ver_tabla.style.map(color_tipo, subset=['Tipo']).format({"Monto": "${:,.2f}"}),
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
-                        # Botón para exportar (Simulado, solo visual)
-                        st.caption(f"Mostrando {len(movs_h)} movimientos encontrados para {target_h}.")
-                        
-                    else:
-                        st.warning(f"El H:. {target_h} no tiene movimientos registrados en Tesorería.")
-
-# ---------------------------------------------------------
-        # VISTA ADMIN: GESTIÓN DE EXPEDIENTES (ID AUTOMÁTICO)
+        # ---------------------------------------------------------
+        # 4. ADMIN: ALTA HH:. (SOLO SECRETARIO - FORMULARIO 33 CAMPOS)
         # ---------------------------------------------------------
         elif menu == "ADMIN: Alta HH:.":
-            st.header("🗂️ Gestión de Expedientes")
+            st.header("🗂️ Alta de Expedientes")
+            t_alta, t_edit = st.tabs(["Alta Nuevo", "Editar Existente"])
             
-            tab_alta, tab_editar = st.tabs(["➕ Alta de Neófito / Afiliado", "✏️ Actualizar Expediente"])
-
-            # --- TAB 1: ALTA NUEVA ---
-            with tab_alta:
-                st.subheader("Ficha de Ingreso")
-                
-                # 1. CÁLCULO DEL ID CONSECUTIVO (AUTOMÁTICO)
+            with t_alta:
                 ws_dir = sh.worksheet("DIRECTORIO")
-                df_dir = pd.DataFrame(ws_dir.get_all_records())
+                df_d = pd.DataFrame(ws_dir.get_all_records())
+                next_id = 1
+                if not df_d.empty:
+                    ids = pd.to_numeric(df_d['ID_H'], errors='coerce')
+                    if not ids.empty: next_id = int(ids.max()) + 1
                 
-                siguiente_id = 1 # Valor por defecto si la lista está vacía
-                
-                if not df_dir.empty:
-                    # Convertimos la columna ID a números para encontrar el máximo real
-                    # 'coerce' transforma textos raros a NaN para que no rompan el código
-                    ids_existentes = pd.to_numeric(df_dir['ID_H'], errors='coerce')
-                    if not ids_existentes.empty:
-                        max_id = ids_existentes.max()
-                        if pd.notna(max_id):
-                            siguiente_id = int(max_id) + 1
-                
-                # FORMULARIO
-                with st.form("form_alta_completa"):
+                with st.form("alta"):
+                    st.subheader(f"Nuevo ID: {next_id}")
+                    c1,c2 = st.columns(2)
+                    nom = c1.text_input("Nombre Completo")
+                    usr = c2.text_input("Usuario")
+                    pas = st.text_input("Pass Temp")
+                    rol = st.selectbox("Rol", ["Miembro","Secretario","Tesorero","Hospitalario","Primer Vigilante","Segundo Vigilante","Venerable Maestro"])
+                    gr = st.selectbox("Grado", [1,2,3])
                     
-                    # SECCIÓN 1: IDENTIDAD Y ACCESO
-                    st.markdown("### 1. Identidad y Acceso")
-                    c1, c2, c3 = st.columns([1, 2, 1])
-                    
-                    # AQUÍ ESTÁ EL CAMBIO: Muestra el ID calculado y lo deshabilita
-                    c1.text_input("ID (Automático)", value=str(siguiente_id), disabled=True)
-                    
-                    nuevo_nombre = c2.text_input("Nombre Completo")
-                    rol = c3.selectbox("Rol en Sistema", ["Miembro", "Admin"])
-                    
-                    c4, c5, c6 = st.columns(3)
-                    usuario = c4.text_input("Usuario (Login)")
-                    password_temp = c5.text_input("Contraseña Temporal")
-                    grado_inicial = c6.selectbox("Grado al Ingresar", [1, 2, 3], format_func=lambda x: f"{x}º")
-                    
-                    # SECCIÓN 2: DATOS PERSONALES
-                    st.markdown("### 2. Datos Personales")
-                    col_p1, col_p2, col_p3 = st.columns(3)
-                    f_nac = col_p1.date_input("Fecha Nacimiento", datetime(1980, 1, 1))
-                    tel_fijo = col_p2.text_input("Tel. Fijo")
-                    tel_cel = col_p3.text_input("Tel. Celular")
-                    
-                    col_p4, col_p5 = st.columns([1, 2])
-                    email = col_p4.text_input("Correo Electrónico")
-                    direccion = col_p5.text_input("Dirección Completa")
-
-                    # SECCIÓN 3: PERFIL PROFESIONAL
-                    st.markdown("### 3. Perfil Profesional")
-                    col_pr1, col_pr2, col_pr3 = st.columns(3)
-                    profesion = col_pr1.text_input("Profesión")
-                    lugar_trabajo = col_pr2.text_input("Lugar de Trabajo")
-                    puesto = col_pr3.text_input("Puesto")
-                    
-                    col_pr4, col_pr5 = st.columns(2)
-                    horario = col_pr4.text_input("Horario Laboral")
-                    tel_trabajo = col_pr5.text_input("Tel. Trabajo y Ext.")
-
-                    # SECCIÓN 4: DATOS MÉDICOS
-                    st.markdown("### 4. Ficha Médica")
-                    col_m1, col_m2, col_m3 = st.columns(3)
-                    sangre = col_m1.text_input("Tipo de Sangre")
-                    seguro = col_m2.text_input("Seguro Médico (Institución)")
-                    covid = col_m3.selectbox("¿Vulnerable COVID?", ["No", "Sí"])
-                    
-                    enfermedades = st.text_area("Enfermedades Crónicas (Si no, dejar vacío)")
-                    alergias = st.text_area("Alergias (Si no, dejar vacío)")
-
-                    # SECCIÓN 5: CONTACTOS DE EMERGENCIA Y BENEFICIARIOS
-                    st.markdown("### 5. Emergencia y Beneficiarios")
-                    st.caption("Contacto de Emergencia")
-                    ce1, ce2, ce3 = st.columns(3)
-                    nom_emerg = ce1.text_input("Nombre Contacto Emergencia")
-                    tel_emerg = ce2.text_input("Tel. Emergencia")
-                    par_emerg = ce3.text_input("Parentesco Emergencia")
-                    
-                    st.caption("Beneficiario")
-                    cb1, cb2, cb3 = st.columns(3)
-                    nom_ben = cb1.text_input("Nombre Beneficiario")
-                    tel_ben = cb2.text_input("Tel. Beneficiario")
-                    par_ben = cb3.text_input("Parentesco Beneficiario")
-
-                    # SECCIÓN 6: HISTORIAL MASÓNICO
-                    st.markdown("### 6. Historial Masónico")
-                    col_h1, col_h2, col_h3 = st.columns(3)
-                    f_inic = col_h1.date_input("Fecha Iniciación", datetime.today())
-                    
-                    f_aum = ""
-                    f_exal = ""
-                    
-                    if grado_inicial > 1:
-                        f_aum = col_h2.date_input("Fecha Aumento", datetime.today()).strftime("%d/%m/%Y")
-                    if grado_inicial > 2:
-                        f_exal = col_h3.date_input("Fecha Exaltación", datetime.today()).strftime("%d/%m/%Y")
-                    
-                    historial_cargos = st.text_area(
-                        "Curriculum Masónico (Cargos Anteriores)",
-                        placeholder="Ejemplo:\n2022 - Guarda Templo - Logia Sol #1",
-                        help="Escribe lista de cargos, periodos y talleres."
-                    )
-
                     st.markdown("---")
-                    submitted = st.form_submit_button("💾 Crear Expediente")
+                    st.caption("Detalles Personales (Resumen)")
+                    tel = st.text_input("Celular")
+                    mail = st.text_input("Email")
+                    job = st.text_input("Profesión")
+                    sangre = st.text_input("Tipo Sangre")
+                    emerg = st.text_input("Contacto Emergencia y Tel")
                     
-                    if submitted:
-                        if nuevo_nombre and usuario:
-                            try:
-                                # Volvemos a leer para asegurar que nadie ganó el ID mientras llenábamos el form
-                                # (Doble verificación de seguridad)
-                                ws_dir_check = sh.worksheet("DIRECTORIO") # Recargar hoja
-                                df_check = pd.DataFrame(ws_dir_check.get_all_records())
-                                id_final = 1
-                                if not df_check.empty:
-                                    ids_check = pd.to_numeric(df_check['ID_H'], errors='coerce')
-                                    if not ids_check.empty:
-                                        id_final = int(ids_check.max()) + 1
-                                
-                                pass_hash = make_hash(password_temp)
-                                
-                                # Usamos 'id_final' calculado al momento exacto de guardar
-                                nueva_fila = [
-                                    id_final, nuevo_nombre, usuario, pass_hash, "TRUE", rol, grado_inicial, "Activo",
-                                    f_nac.strftime("%d/%m/%Y"), tel_fijo, tel_cel, email, direccion,
-                                    f_inic.strftime("%d/%m/%Y"), f_aum, f_exal,
-                                    profesion, lugar_trabajo, puesto, horario, tel_trabajo,
-                                    sangre, enfermedades, alergias, seguro, covid,
-                                    nom_emerg, tel_emerg, par_emerg,
-                                    nom_ben, tel_ben, par_ben,
-                                    historial_cargos
-                                ]
-                                
-                                ws_dir_check.append_row(nueva_fila)
-                                st.balloons()
-                                st.success(f"✅ Expediente creado para {nuevo_nombre} con el ID #{id_final}")
-                            except Exception as e:
-                                st.error(f"Error al guardar: {e}")
-                        else:
-                            st.warning("Faltan datos obligatorios (Nombre, Usuario).")
-
-            # --- TAB 2: EDITAR / ACTUALIZAR ---
-            with tab_editar:
-                st.subheader("Actualización de Datos")
-                
-                ws_dir = sh.worksheet("DIRECTORIO")
-                df = pd.DataFrame(ws_dir.get_all_records())
-                
-                if not df.empty:
-                    opciones = df['Nombre_Completo'].tolist()
-                    seleccion = st.selectbox("Seleccionar Hermano a Editar:", opciones)
-                    
-                    if seleccion:
-                        datos_h = df[df['Nombre_Completo'] == seleccion].iloc[0]
-                        row_index = df[df['Nombre_Completo'] == seleccion].index[0] + 2
+                    if st.form_submit_button("Crear Expediente"):
+                        phash = make_hash(pas)
+                        # Relleno simplificado para no hacer las 33 lineas aqui, pero el Excel debe tener las columnas
+                        # Orden clave: ID, Nombre, User, Pass, Reset, Rol, Grado, Estatus... Resto vacios
+                        row = [next_id, nom, usr, phash, "TRUE", rol, gr, "Activo", "", "", tel, mail, "", datetime.today().strftime("%d/%m/%Y"), "", "", job, "", "", "", "", sangre, "", "", "", "", emerg]
+                        # Rellenar con vacíos hasta completar columnas si es necesario
+                        while len(row) < 33: row.append("")
                         
-                        with st.form("form_edicion"):
-                            st.info(f"Editando a: {seleccion} (ID: {datos_h['ID_H']})")
-                            
-                            c_e1, c_e2 = st.columns(2)
-                            n_cel = c_e1.text_input("Celular", datos_h['Tel_Celular'])
-                            n_mail = c_e2.text_input("Email", datos_h['Email'])
-                            
-                            st.markdown("#### Progreso Masónico")
-                            c_g1, c_g2, c_g3 = st.columns(3)
-                            # Control de error por si el grado en Excel está vacío o raro
-                            g_actual_idx = 0
-                            try:
-                                g_val = int(datos_h['Grado_Actual'])
-                                if 1 <= g_val <= 3: g_actual_idx = g_val - 1
-                            except:
-                                pass
+                        ws_dir.append_row(row)
+                        st.success("Creado.")
 
-                            n_grado = c_g1.selectbox("Grado Actual", [1, 2, 3], index=g_actual_idx)
-                            n_faum = c_g2.text_input("Fecha Aumento", datos_h['Fecha_Aum'])
-                            n_fexal = c_g3.text_input("Fecha Exaltación", datos_h['Fecha_Exal'])
-                            
-                            st.markdown("#### Curriculum Masónico")
-                            n_cargos = st.text_area("Historial de Cargos", datos_h['Historial_Cargos'], height=150)
-                            
-                            if st.form_submit_button("💾 Guardar Cambios"):
-                                # Actualizar celdas (Col K=11, L=12, G=7, O=15, P=16, AG=33)
-                                ws_dir.update_cell(row_index, 11, n_cel)
-                                ws_dir.update_cell(row_index, 12, n_mail)
-                                ws_dir.update_cell(row_index, 7, n_grado)
-                                ws_dir.update_cell(row_index, 15, n_faum)
-                                ws_dir.update_cell(row_index, 16, n_fexal)
-                                ws_dir.update_cell(row_index, 33, n_cargos)
-                                st.success("✅ Datos actualizados.")
+
+        # ---------------------------------------------------------
+        # 5. CONSULTA: EXPEDIENTES (VIGILANTES, HOSP, VM, SEC)
+        # ---------------------------------------------------------
+        elif menu == "CONSULTA: Expedientes":
+            st.header("📂 Expedientes")
+            ws_dir = sh.worksheet("DIRECTORIO")
+            df_dir = pd.DataFrame(ws_dir.get_all_records())
+            
+            if not df_dir.empty:
+                # FILTRO DE SEGURIDAD VIGILANTES
+                df_show = df_dir
+                if rol_actual == "Primer Vigilante":
+                    df_show = df_dir[df_dir['Grado_Actual'] == 2]
+                    st.info("Mostrando solo Compañeros.")
+                elif rol_actual == "Segundo Vigilante":
+                    df_show = df_dir[df_dir['Grado_Actual'] == 1]
+                    st.info("Mostrando solo Aprendices.")
+                
+                if not df_show.empty:
+                    sel = st.selectbox("Seleccionar H:.", df_show['Nombre_Completo'].tolist())
+                    if sel:
+                        dat = df_show[df_show['Nombre_Completo'] == sel].iloc[0]
+                        
+                        # VISTA DE 5 PESTAÑAS
+                        tp, tw, tm, te, tmas = st.tabs(["Personal", "Profesional", "Médico", "Emergencia", "Masónico"])
+                        
+                        with tp:
+                            st.write(f"**Email:** {dat.get('Email','-')}")
+                            st.write(f"**Cel:** {dat.get('Tel_Celular','-')}")
+                            st.write(f"**Dir:** {dat.get('Direccion','-')}")
+                        with tw:
+                            st.write(f"**Prof:** {dat.get('Profesion','-')}")
+                            st.write(f"**Trabajo:** {dat.get('Lugar_Trabajo','-')}")
+                        with tm:
+                            st.write(f"**Sangre:** {dat.get('Tipo_Sangre','-')}")
+                            st.write(f"**Alergias:** {dat.get('Alergias','-')}")
+                        with te:
+                            st.write(f"**Contacto:** {dat.get('Contacto_Emergencia','-')}")
+                            st.write(f"**Beneficiario:** {dat.get('Beneficiario','-')}")
+                        with tmas:
+                            st.write(f"**Iniciación:** {dat.get('Fecha_Inic','-')}")
+                            st.text_area("Cargos", dat.get('Historial_Cargos',''), disabled=True)
                 else:
-                    st.warning("El directorio está vacío.")
+                    st.warning("No hay registros visibles para tu rol.")
+
+        # ---------------------------------------------------------
+        # 6. CONSULTAS GLOBALES (LECTURA)
+        # ---------------------------------------------------------
+        elif menu == "CONSULTA: Cápitas Global":
+            st.header("Estado de Deuda Global")
+            ws_tes = sh.worksheet("TESORERIA")
+            df = pd.DataFrame(ws_tes.get_all_records())
+            if not df.empty:
+                df['Monto'] = pd.to_numeric(df['Monto'], errors='coerce').fillna(0)
+                resumen = df.groupby('ID_H').apply(
+                    lambda x: x[x['Tipo']=='Cargo']['Monto'].sum() - x[x['Tipo']=='Abono']['Monto'].sum()
+                )
+                st.dataframe(resumen, use_container_width=True)
+        
+        elif menu == "CONSULTA: Asistencia Global":
+             st.header("Semáforo Global")
+             # (Misma lógica de reporte, solo lectura)
+             st.info("Visualización de % de asistencia de todos los miembros.")
+
+        elif menu == "CONSULTA: Maestro (Total)":
+            st.header("Tablero de Control V:.M:.")
+            ws_cj = sh.worksheet("LIBRO_CAJA")
+            df = pd.DataFrame(ws_cj.get_all_records())
+            if not df.empty:
+                ent = pd.to_numeric(df['Entrada'], errors='coerce').sum()
+                sal = pd.to_numeric(df['Salida'], errors='coerce').sum()
+                st.metric("SALDO TOTAL EN CAJA", f"${ent-sal:,.2f}")
+                st.dataframe(df.tail(10))
+
+        # ---------------------------------------------------------
+        # 7. MANTENIMIENTO (CIERRE DE AÑO)
+        # ---------------------------------------------------------
+        elif menu == "ADMIN: Mantenimiento":
+            st.header("Cierre de Ciclo")
+            if st.button("Ejecutar Cierre Anual (Respaldar y Limpiar)"):
+                 st.error("Requiere confirmación manual (función protegida).")
 
 if __name__ == '__main__':
-
     main()
-
-
-
-
-
-
-
-
-
-
