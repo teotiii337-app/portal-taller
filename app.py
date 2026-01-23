@@ -351,7 +351,7 @@ def main():
                         
                         ws_dir.append_row(row)
                         st.success("Creado.")
-            with t_edit:
+with t_edit:
                 st.subheader("✏️ Edición Completa de Expediente")
                 
                 # 1. Cargar datos
@@ -368,29 +368,35 @@ def main():
                         # Encontrar índice y datos
                         idx = df_edit[df_edit['Nombre_Completo'] == seleccion_edit].index[0]
                         datos = df_edit.iloc[idx]
-                        fila_excel = idx + 2 # +2 por Header y base 0
+                        fila_excel = idx + 2 
                         
                         st.info(f"Editando expediente de: **{seleccion_edit}** (ID: {datos['ID_H']})")
 
                         with st.form("form_edicion_full"):
-                            # Organizamos en Pestañas para que sea manejable
+                            # Organizamos en Pestañas
                             te_gen, te_prof, te_med, te_emer, te_mas = st.tabs([
-                                "👤 Identidad y Contacto", 
-                                "💼 Profesional", 
-                                "🏥 Médico", 
-                                "🚨 Emergencia", 
-                                "∴ Historial Masónico"
+                                "👤 Identidad", "💼 Profesional", "🏥 Médico", "🚨 Emergencia", "∴ Masónico"
                             ])
 
                             # --- TAB 1: GENERAL ---
                             with te_gen:
                                 c1, c2 = st.columns(2)
                                 e_nombre = c1.text_input("Nombre Completo", value=str(datos.get('Nombre_Completo', '')))
-                                e_rol = c2.selectbox("Rol Sistema", ["Miembro","Secretario","Tesorero","Hospitalario","Primer Vigilante","Segundo Vigilante","Venerable Maestro"], index=["Miembro","Secretario","Tesorero","Hospitalario","Primer Vigilante","Segundo Vigilante","Venerable Maestro"].index(datos.get('Rol', 'Miembro')))
+                                
+                                # SOLUCIÓN ERROR DE ÍNDICE: Validamos si el valor existe en la lista
+                                lista_roles = ["Miembro","Secretario","Tesorero","Hospitalario","Primer Vigilante","Segundo Vigilante","Venerable Maestro"]
+                                rol_actual = str(datos.get('Rol', 'Miembro')).strip() # Quitamos espacios extra
+                                idx_rol = lista_roles.index(rol_actual) if rol_actual in lista_roles else 0
+                                e_rol = c2.selectbox("Rol Sistema", lista_roles, index=idx_rol)
                                 
                                 c3, c4 = st.columns(2)
-                                e_f_nac = c3.text_input("Fecha Nacimiento (DD/MM/AAAA)", value=str(datos.get('Fecha_Nac', '')))
-                                e_estatus = c4.selectbox("Estatus", ["Activo", "Sueños", "Baja", "Oriente Eterno"], index=["Activo", "Sueños", "Baja", "Oriente Eterno"].index(datos.get('Estatus', 'Activo')))
+                                e_f_nac = c3.text_input("Fecha Nacimiento", value=str(datos.get('Fecha_Nac', '')))
+                                
+                                # SOLUCIÓN ERROR DE ESTATUS (Aquí tronaba antes)
+                                lista_estatus = ["Activo", "Sueños", "Baja", "Oriente Eterno"]
+                                est_actual = str(datos.get('Estatus', 'Activo')).strip()
+                                idx_est = lista_estatus.index(est_actual) if est_actual in lista_estatus else 0
+                                e_estatus = c4.selectbox("Estatus", lista_estatus, index=idx_est)
                                 
                                 c5, c6, c7 = st.columns(3)
                                 e_cel = c5.text_input("Celular", value=str(datos.get('Tel_Celular', '')))
@@ -415,8 +421,10 @@ def main():
                                 cm1, cm2, cm3 = st.columns(3)
                                 e_sangre = cm1.text_input("Tipo Sangre", value=str(datos.get('Tipo_Sangre', '')))
                                 e_seguro = cm2.text_input("Seguro Médico", value=str(datos.get('Seguro_Medico', '')))
-                                # Lógica para index del selectbox (evitar error si dato no coincide)
-                                idx_cov = 0 if datos.get('Vulnerable_Covid') != 'Sí' else 1
+                                
+                                # Validación segura para COVID
+                                val_covid = str(datos.get('Vulnerable_Covid', 'No')).strip()
+                                idx_cov = 1 if val_covid == 'Sí' else 0
                                 e_covid = cm3.selectbox("Vulnerable COVID", ["No", "Sí"], index=idx_cov)
                                 
                                 e_enf = st.text_area("Enfermedades", value=str(datos.get('Enf_Cronicas', '')), height=68)
@@ -436,12 +444,15 @@ def main():
                                 e_tel_ben = cb2.text_input("Tel. Beneficiario", value=str(datos.get('Tel_Beneficiario', '')))
                                 e_par_ben = cb3.text_input("Parentesco Ben.", value=str(datos.get('Parentesco_Beneficiario', '')))
 
-                            # --- TAB 5: MASÓNICO (AQUÍ ESTÁ LO QUE PEDISTE) ---
+                            # --- TAB 5: MASÓNICO ---
                             with te_mas:
                                 cm1, cm2, cm3, cm4 = st.columns(4)
-                                # Calculamos index de grado seguro
-                                try: g_val = int(datos.get('Grado_Actual', 1)) - 1
-                                except: g_val = 0
+                                # Validación segura para Grado
+                                try: 
+                                    g_val = int(datos.get('Grado_Actual', 1)) - 1
+                                    if g_val < 0 or g_val > 2: g_val = 0
+                                except: 
+                                    g_val = 0
                                 e_grado = cm1.selectbox("Grado", [1,2,3], index=g_val)
                                 
                                 e_finic = cm2.text_input("F. Iniciación", value=str(datos.get('Fecha_Inic', '')))
@@ -449,48 +460,42 @@ def main():
                                 e_fexal = cm4.text_input("F. Exaltación", value=str(datos.get('Fecha_Exal', '')))
                                 
                                 st.markdown("#### 📜 Curriculum Masónico")
-                                st.caption("Por favor, usa el formato: **[Puesto] en [Taller] - Ciclo [Año]**")
-                                
-                                # Texto de ayuda predeterminado si está vacío
-                                valor_actual_cargos = str(datos.get('Historial_Cargos', ''))
-                                placeholder_cargos = "Ej: Secretario en R.L.S. Fraternidad No. 22 - Ciclo 2024\nEj: Hospitalario en R.L.S. Esperanza - Ciclo 2025"
-                                
+                                valor_cargos = str(datos.get('Historial_Cargos', ''))
                                 e_cargos = st.text_area(
-                                    "Cargos Desempeñados (Uno por renglón)", 
-                                    value=valor_actual_cargos,
-                                    placeholder=placeholder_cargos,
+                                    "Cargos (Formato sugerido: Puesto en Taller - Ciclo)", 
+                                    value=valor_cargos,
                                     height=200,
-                                    help="Escribe cada cargo en una línea nueva siguiendo el formato."
+                                    help="Uno por renglón."
                                 )
 
                             st.markdown("---")
+                            # ESTE BOTÓN DEBE ESTAR ALINEADO CON LAS PESTAÑAS (DENTRO DEL FORM)
                             if st.form_submit_button("💾 Actualizar Expediente Completo"):
                                 try:
-                                    # CONSTRUIMOS LA FILA COMPLETA PARA ACTUALIZAR DE GOLPE (Más rápido y seguro)
-                                    # Mantenemos ID, User, Pass, Reset originales
+                                    # Mantenemos datos sensibles originales
                                     id_orig = datos['ID_H']
                                     user_orig = datos['Usuario']
                                     pass_orig = datos['Password']
                                     reset_orig = datos['Reset_Requerido']
                                     
-                                    # Lista ordenada según columnas A-AG (33 campos)
+                                    # Lista ordenada A-AG
                                     fila_actualizada = [
-                                        id_orig, e_nombre, user_orig, pass_orig, reset_orig, e_rol, e_grado, e_estatus, # A-H
-                                        e_f_nac, e_fijo, e_cel, e_mail, e_dir, # I-M
-                                        e_finic, e_faum, e_fexal, # N-P
-                                        e_prof, e_lugar, e_puesto, e_horario, e_tel_trab, # Q-U
-                                        e_sangre, e_enf, e_alerg, e_seguro, e_covid, # V-Z
-                                        e_nom_em, e_tel_em, e_par_em, # AA-AC
-                                        e_nom_ben, e_tel_ben, e_par_ben, # AD-AF
-                                        e_cargos # AG
+                                        id_orig, e_nombre, user_orig, pass_orig, reset_orig, e_rol, e_grado, e_estatus,
+                                        e_f_nac, e_fijo, e_cel, e_mail, e_dir,
+                                        e_finic, e_faum, e_fexal,
+                                        e_prof, e_lugar, e_puesto, e_horario, e_tel_trab,
+                                        e_sangre, e_enf, e_alerg, e_seguro, e_covid,
+                                        e_nom_em, e_tel_em, e_par_em,
+                                        e_nom_ben, e_tel_ben, e_par_ben,
+                                        e_cargos
                                     ]
                                     
-                                    # Actualizamos el rango completo de esa fila (A hasta AG)
+                                    # Actualizar en Excel
                                     rango = f"A{fila_excel}:AG{fila_excel}"
                                     ws_dir.update(range_name=rango, values=[fila_actualizada])
                                     
-                                    st.success(f"✅ Expediente de {e_nombre} actualizado correctamente.")
-                                    st.rerun() # Recarga para ver cambios
+                                    st.success(f"✅ Expediente de {e_nombre} actualizado.")
+                                    st.rerun()
                                     
                                 except Exception as e:
                                     st.error(f"Error al guardar: {e}")
@@ -582,6 +587,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
 
