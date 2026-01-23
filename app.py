@@ -602,108 +602,143 @@ def main():
                 else:
                     st.warning("El directorio está vacío.")
 
-            # --- TAB 3: EXPEDIENTE INDIVIDUAL ---
+# --- TAB 3: EXPEDIENTE COMPLETO (ACTUALIZADO CON TUS NUEVOS CAMPOS) ---
             with tab_kardex:
-                st.subheader("📂 Expediente del Hermano")
+                st.subheader("📂 Expediente Digital del Hermano")
                 
                 ws_dir = sh.worksheet("DIRECTORIO")
                 registros_dir = ws_dir.get_all_records()
                 
                 if registros_dir:
-                    nombres = ws_dir.col_values(2)[1:] # Columna B (Nombres)
-                    ids = ws_dir.col_values(1)[1:] # Columna A (IDs)
+                    nombres = ws_dir.col_values(2)[1:]
+                    ids = ws_dir.col_values(1)[1:]
                     
-                    # Validar que las listas tengan el mismo tamaño antes de hacer zip
                     if len(nombres) == len(ids) and len(nombres) > 0:
                         dic_hh = dict(zip(nombres, ids))
                         
-                        seleccionado = st.selectbox("Buscar Hermano:", nombres)
+                        seleccionado = st.selectbox("🔍 Buscar Hermano:", nombres)
                         
                         if seleccionado:
                             id_sel = str(dic_hh[seleccionado])
                             st.markdown("---")
                             
-                            # Datos Generales
+                            # 1. Recuperar Info Personal
                             df_dir = pd.DataFrame(registros_dir)
                             df_dir['ID_H'] = df_dir['ID_H'].astype(str)
                             match = df_dir[df_dir['ID_H'] == id_sel]
                             
                             if not match.empty:
-                                info_h = match.iloc[0]
+                                info = match.iloc[0] # Usamos 'info' para abreviar
                                 
-                                # Datos Financieros
+                                # --- ENCABEZADO ---
+                                c1, c2, c3, c4 = st.columns(4)
+                                c1.metric("Grado", f"{info.get('Grado_Actual', '-')}º")
+                                c2.metric("Estatus", info.get('Estatus', '-'))
+                                c3.metric("ID", f"#{info.get('ID_H', '-')}")
+                                c4.metric("Usuario", info.get('Usuario', '-'))
+
+                                # --- PESTAÑAS DE DETALLE (EL NUEVO "CORE") ---
+                                t_pers, t_prof, t_med, t_emer, t_mas = st.tabs([
+                                    "👤 Personal", "💼 Profesional", "🏥 Médico", "🚨 Emergencia", "∴ Masónico"
+                                ])
+                                
+                                with t_pers:
+                                    st.caption("Datos de Contacto y Generales")
+                                    cp1, cp2 = st.columns(2)
+                                    cp1.write(f"**🎂 Nacimiento:** {info.get('Fecha_Nac', '-')}")
+                                    cp1.write(f"**📧 Email:** {info.get('Email', '-')}")
+                                    cp1.write(f"**🏠 Dirección:** {info.get('Direccion', '-')}")
+                                    
+                                    cp2.write(f"**📱 Celular:** {info.get('Tel_Celular', '-')}")
+                                    cp2.write(f"**📞 Fijo:** {info.get('Tel_Fijo', '-')}")
+                                
+                                with t_prof:
+                                    st.caption("Perfil Laboral")
+                                    cf1, cf2 = st.columns(2)
+                                    cf1.write(f"**👨‍💻 Profesión:** {info.get('Profesion', '-')}")
+                                    cf1.write(f"**🏢 Lugar:** {info.get('Lugar_Trabajo', '-')}")
+                                    cf2.write(f"**🏷️ Puesto:** {info.get('Puesto', '-')}")
+                                    cf2.write(f"**⏰ Horario:** {info.get('Horario_Trabajo', '-')}")
+                                    st.write(f"**☎️ Tel. Trabajo:** {info.get('Tel_Trabajo', '-')}")
+
+                                with t_med:
+                                    st.caption("Ficha Médica")
+                                    cm1, cm2 = st.columns(2)
+                                    cm1.write(f"**🩸 Sangre:** {info.get('Tipo_Sangre', '-')}")
+                                    cm2.write(f"**🏥 Seguro:** {info.get('Seguro_Medico', '-')}")
+                                    
+                                    st.markdown("**🦠 Vulnerable COVID:** " + ("✅ Sí" if info.get('Vulnerable_Covid') == 'Sí' else "No"))
+                                    
+                                    with st.expander("💊 Enfermedades y Alergias", expanded=False):
+                                        st.write(f"**Crónicas:** {info.get('Enf_Cronicas', 'Ninguna')}")
+                                        st.write(f"**Alergias:** {info.get('Alergias', 'Ninguna')}")
+
+                                with t_emer:
+                                    st.caption("En caso de accidente contactar a:")
+                                    ce1, ce2 = st.columns(2)
+                                    ce1.write(f"**🆘 Contacto:** {info.get('Contacto_Emergencia', '-')}")
+                                    ce1.write(f"**👪 Parentesco:** {info.get('Parentesco_Emergencia', '-')}")
+                                    ce2.write(f"**📞 Teléfono:** {info.get('Tel_Emergencia', '-')}")
+                                    
+                                    st.divider()
+                                    st.caption("Beneficiario Designado:")
+                                    st.write(f"**👤 Nombre:** {info.get('Beneficiario', '-')}")
+                                    st.write(f"**👪 Relación:** {info.get('Parentesco_Beneficiario', '-')}")
+                                    st.write(f"**📞 Tel:** {info.get('Tel_Beneficiario', '-')}")
+
+                                with t_mas:
+                                    st.caption("Carrera Masónica")
+                                    cm_1, cm_2, cm_3 = st.columns(3)
+                                    cm_1.write(f"**Iniciación:** {info.get('Fecha_Inic', '-')}")
+                                    cm_2.write(f"**Aumento:** {info.get('Fecha_Aum', '-')}")
+                                    cm_3.write(f"**Exaltación:** {info.get('Fecha_Exal', '-')}")
+                                    
+                                    st.markdown("#### 📜 Curriculum (Cargos)")
+                                    st.info(info.get('Historial_Cargos', 'Sin registros previos.'))
+
+                                st.divider()
+                                
+                                # --- RESUMEN OPERATIVO (FINANZAS Y ASISTENCIA) ---
+                                col_fin, col_asis = st.columns(2)
+                                
+                                # Cálculos rápidos de Finanzas
                                 ws_tes = sh.worksheet("TESORERIA")
                                 df_tes = pd.DataFrame(ws_tes.get_all_records())
                                 saldo = 0
-                                mi_tes = pd.DataFrame()
-                                
                                 if not df_tes.empty:
                                     df_tes['ID_H'] = df_tes['ID_H'].astype(str)
                                     mi_tes = df_tes[df_tes['ID_H'] == id_sel]
                                     mi_tes['Monto'] = pd.to_numeric(mi_tes['Monto'], errors='coerce').fillna(0)
                                     saldo = mi_tes[mi_tes['Tipo'] == 'Cargo']['Monto'].sum() - mi_tes[mi_tes['Tipo'] == 'Abono']['Monto'].sum()
 
-                                # Datos Asistencia
+                                # Cálculos rápidos de Asistencia
                                 ws_asis = sh.worksheet("ASISTENCIAS")
                                 df_asis = pd.DataFrame(ws_asis.get_all_records())
                                 pct_asis = 0
-                                total_asis = 0
-                                mis_asis = pd.DataFrame()
-                                
                                 if not df_asis.empty:
                                     df_asis['ID_H'] = df_asis['ID_H'].astype(str)
                                     mis_asis = df_asis[df_asis['ID_H'] == id_sel]
-                                    total_asis = len(mis_asis)
+                                    total = len(mis_asis)
                                     positivas = len(mis_asis[mis_asis['Estado'].isin(['Presente', 'Retardo'])])
-                                    if total_asis > 0:
-                                        pct_asis = (positivas / total_asis) * 100
-                                
-                                # --- VISTA ---
-                                c1, c2, c3, c4 = st.columns(4)
-                                c1.metric("Grado", f"{info_h['Grado_Actual']}º")
-                                c2.metric("Estatus", info_h['Estatus'])
-                                c3.metric("Usuario", info_h['Usuario'])
-                                c4.metric("ID", f"#{info_h['ID_H']}")
-                                
-                                with st.expander("📅 Fechas Masónicas"):
-                                    f1, f2, f3 = st.columns(3)
-                                    # .get() evita error si la columna no existe en Excel viejo
-                                    f1.write(f"**Iniciación:** {info_h.get('Fecha_Inic', '-')}")
-                                    f2.write(f"**Aumento:** {info_h.get('Fecha_Aum', '-')}")
-                                    f3.write(f"**Exaltación:** {info_h.get('Fecha_Exal', '-')}")
+                                    if total > 0: pct_asis = (positivas / total) * 100
 
-                                st.divider()
-                                col_fin, col_asis = st.columns(2)
-                                
                                 with col_fin:
-                                    st.markdown("### 💰 Tesorería")
+                                    st.subheader("💰 Estado Financiero")
                                     if saldo > 0:
-                                        st.error(f"Adeudo Total: **${saldo:,.2f}**")
-                                    elif saldo == 0:
-                                        st.success("Al corriente ($0.00)")
+                                        st.error(f"Debe: ${saldo:,.2f}")
                                     else:
-                                        st.success(f"Saldo a Favor: ${abs(saldo):,.2f}")
-                                    
-                                    if not mi_tes.empty:
-                                        st.caption("Últimos movimientos:")
-                                        st.dataframe(mi_tes.tail(3)[['Fecha', 'Concepto', 'Tipo', 'Monto']], use_container_width=True, hide_index=True)
-
+                                        st.success("A Plomo")
+                                
                                 with col_asis:
-                                    st.markdown("### 📝 Asistencia")
-                                    st.metric("Porcentaje Histórico", f"{pct_asis:.1f}%")
-                                    st.write(f"Asistencias: **{int((pct_asis/100)*total_asis)}** / **{total_asis}**")
-                                    
-                                    if not mis_asis.empty:
-                                        faltas = mis_asis[mis_asis['Estado'] == 'Falta']
-                                        if not faltas.empty:
-                                            st.caption("Últimas Faltas:")
-                                            st.dataframe(faltas.tail(3)[['Fecha_Tenida', 'Grado_Tenida']], use_container_width=True, hide_index=True)
+                                    st.subheader("📝 Asistencia")
+                                    st.metric("Global", f"{pct_asis:.1f}%")
+
                             else:
-                                st.error("No se encontraron detalles para este ID.")
+                                st.error("No se encontraron detalles.")
                     else:
-                        st.warning("Error: Las columnas de ID y Nombre no coinciden o están vacías.")
+                        st.warning("Error de sincronización en Directorio.")
                 else:
-                    st.error("Error al leer Directorio.")
+                    st.error("No se pudo leer el Directorio.")
 
         # ---------------------------------------------------------
         # VISTA ADMIN: TESORERÍA GENERAL (CON AUDITORÍA INDIVIDUAL)
@@ -1163,6 +1198,7 @@ def main():
 if __name__ == '__main__':
 
     main()
+
 
 
 
