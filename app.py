@@ -351,7 +351,7 @@ def main():
                         
                         ws_dir.append_row(row)
                         st.success("Creado.")
-with t_edit:
+            with t_edit:
                 st.subheader("✏️ Edición Completa de Expediente")
                 
                 # 1. Cargar datos
@@ -587,6 +587,7 @@ with t_edit:
 
 if __name__ == '__main__':
     main()
+
 
 
 
